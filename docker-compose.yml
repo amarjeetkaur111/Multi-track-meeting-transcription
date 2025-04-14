@@ -1,0 +1,40 @@
+version: '3.9'
+
+services:
+  whisper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: whisper-priority-image
+    container_name: whisper-priority-container
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    volumes:
+      - ./models:/root/.cache/whisper
+      - /transcripts:/transcripts
+      - /raw:/raw
+      - .:/app
+      - /var/run/docker.sock:/var/run/docker.sock # Mount Docker socket
+    ports:
+      - "5000:5000"
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    command: sh -c "rm -rf /app/*.log && supervisord -c /etc/supervisor/conf.d/supervisord.conf -n"
+
+  redis:
+    image: redis:latest
+    container_name: redis_server
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf # 👈 Mount the custom config
+    command: redis-server /usr/local/etc/redis/redis.conf # 👈 Use the custom config
