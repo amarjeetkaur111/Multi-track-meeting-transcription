@@ -4,8 +4,18 @@ REDIS_CLI="redis-cli -h redis -p 6379"
 LOCK_PREFIX="lock:"
 QUEUE_HIGH="whisper_high"
 QUEUE_LOW="whisper_low"
+PAUSE_FILE="/app/pause_flag"
 
 while true; do
+
+    # --- PAUSE CHECK ---
+    if [ -f "$PAUSE_FILE" ]; then
+        echo "Whisper paused. No new tasks will be picked."
+        sleep 5
+        continue
+    fi
+    # --- END PAUSE CHECK ---
+
     # First, try to pop a file from the high-priority queue
     FILE_ID_HIGH=$($REDIS_CLI RPOP "$QUEUE_HIGH")
     if [ -n "$FILE_ID_HIGH" ]; then
@@ -69,6 +79,17 @@ while true; do
         echo "merge_speakers failed for $FILE_ID (exit code: $MERGE_EXIT_CODE)"
     fi
     
+    echo "Generating GPT summary for $FILE_ID …"
+    python3 /app/gpt_summary.py "$FILE_ID"
+    SUMMARY_EXIT=$?
+
+    if [ $SUMMARY_EXIT -eq 0 ]; then
+        echo "✅ Summary succeeded: /transcripts/scripts/${FILE_ID}_summary.txt"
+    else
+        echo "❌ Summary generation failed for $FILE_ID (exit code $SUMMARY_EXIT)"
+    fi
+
+
     # Release the lock
     $REDIS_CLI DEL "$LOCK_KEY"
 done

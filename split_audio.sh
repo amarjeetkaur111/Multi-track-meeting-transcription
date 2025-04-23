@@ -16,7 +16,7 @@ base_name="$(basename -- "$input_file" .${input_file##*.})"
 output_dir="/app/chunks/${base_name}"  # Updated chunk storage location
 mkdir -p "$output_dir"
 
-silence_info=$(ffmpeg -y -i "$input_file" -af "silencedetect=noise=-25dB:d=6" -f null - 2>&1 | \
+silence_info=$(ffmpeg -y -i "$input_file" -af "silencedetect=noise=-25dB:d=10" -f null - 2>&1 | \
     grep -oP 'silence_(start|end): \K[0-9]+\.?[0-9]*')
 
 declare -a silence_times=($silence_info)

@@ -1,213 +1,306 @@
 #!/usr/bin/env python3
+"""
+Merge speakers’ names into a BigBlueButton meeting transcript.
+
+Usage
+-----
+python merge_speakers.py <events.xml> <input_transcript.txt> <output_transcript.txt>
+
+The transcript must be in the form produced by Whisper / PyAnnote subtitles:
+
+    [HH:MM:SS.sss HH:MM:SS.sss] Spoken text …
+
+The script parses *events.xml* to discover who was talking when, then
+labels each transcript line with the user who spoke for the **most
+appropriate share** of that line’s time span, using robust tie‑breaking and
+context smoothing to handle overlapping microphones and short noises.
+"""
 import logging
 import os
 import re
 import sys
 import shutil
 import xml.etree.ElementTree as ET
+from typing import Dict, List, Tuple
 
-# -----------------------------------------------------------------------------
-# Configure logging to a file named "merge_speaker.log" in the same directory as this script.
-# If you want to log to a different path, adjust LOG_FILE_PATH accordingly.
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tunables – adjust for your environment / tolerance
+# ---------------------------------------------------------------------------
+MIN_TALK_MS   = 300     # discard talking bursts shorter than this
+MERGE_GAP_MS  = 200     # merge same‑speaker intervals whose gap ≤ this
+TIE_MARGIN    = 0.10    # when two speakers’ overlaps differ by <10 % of caption
+LOW_CONF_FRAC = 0.25    # "dominance" threshold; below ⇒ look at context
+
+# ---------------------------------------------------------------------------
 logging.basicConfig(
-    stream=sys.stdout,  # <-- log to console (stdout)
+    stream=sys.stdout,
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-def parse_xml_with_recording_segments(xml_path):
-    """
-    Parse BBB events.xml while respecting start/stop recording logic.
-    Returns:
-      user_map: { userId -> displayName }
-      talk_intervals: { userId -> list of (start_ms, end_ms) }
-        in 'recording timeline' (skips paused sections).
-    """
+# ---------------------------------------------------------------------------
+# Helper: HH:MM:SS.mmm → ms
+# ---------------------------------------------------------------------------
+
+def parse_time_str_to_millis(time_str: str) -> int:
+    hh, mm, ssms = time_str.split(":")
+    ss, ms = ssms.split(".")
+    return ((int(hh) * 3600) + (int(mm) * 60) + int(ss)) * 1000 + int(ms)
+
+# ---------------------------------------------------------------------------
+# 1. Extract talking intervals from events.xml
+# ---------------------------------------------------------------------------
+
+def parse_xml_with_recording_segments(xml_path: str):
+    """Return (userId→displayName, userId→[(start_ms, end_ms), …])."""
 
     if not os.path.exists(xml_path):
-        logging.warning(f"events.xml not found at: {xml_path}")
+        logging.error("events.xml not found: %s", xml_path)
         return {}, {}
 
-    # Attempt to parse
-    try:
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
-    except Exception as e:
-        logging.error(f"Error parsing {xml_path}: {e}")
-        return {}, {}
+    root = ET.parse(xml_path).getroot()
+    events = root.findall("event")
+    events.sort(key=lambda e: int(e.get("timestamp", "0")))
 
-    events = root.findall('event')
-    if not events:
-        logging.warning(f"No <event> elements found in {xml_path}")
-        return {}, {}
-
-    # Sort all events by their numeric 'timestamp'
-    events.sort(key=lambda e: int(e.get('timestamp', '0')))
-
-    user_map = {}
-    talk_intervals = {}
+    user_map: Dict[str, str] = {}
+    talk_intervals: Dict[str, List[Tuple[int, int]]] = {}
 
     is_recording = False
-    recording_started_at = None
-    accumulated_recorded_ms = 0
-    ongoing_talk = {}  # userId -> talk_start_time_in_recording_ms
+    rec_abs_start = None        # abs ts of current recording segment start
+    rec_ms_accum  = 0           # total recorded ms so far (excluding pauses)
+    ongoing: Dict[str, int] = {}  # userId→talk_start_ms (rec timeline)
 
     for ev in events:
-        eventname = ev.get('eventname')
-        timestamp_str = ev.get('timestamp')
-        if not timestamp_str:
+        ev_name = ev.get("eventname")
+        ts_abs  = int(ev.get("timestamp", "0"))
+
+        # 1) participant joins ⇒ map userId→name
+        if ev_name == "ParticipantJoinEvent":
+            uid = ev.findtext("userId")
+            name = ev.findtext("name")
+            if uid and name:
+                user_map[uid] = name
             continue
-        try:
-            ts_abs = int(timestamp_str)
-        except ValueError:
-            continue
 
-        # 1) ParticipantJoinEvent => record user name
-        if eventname == "ParticipantJoinEvent":
-            user_id = ev.findtext('userId')
-            user_name = ev.findtext('name')
-            if user_id and user_name:
-                user_map[user_id] = user_name
-                logging.debug(f"ParticipantJoinEvent => user_id={user_id}, name={user_name}")
-
-        # 2) RecordStatusEvent => start/stop recording
-        elif eventname == "RecordStatusEvent":
-            status = ev.findtext('status')
-            if status is None:
-                continue
-
-            if status.lower() == 'true':
-                # Start new recording segment
-                recording_started_at = ts_abs
+        # 2) recording on/off
+        if ev_name == "RecordStatusEvent":
+            status = (ev.findtext("status") or "").lower()
+            if status == "true":      # recording started
+                rec_abs_start = ts_abs
                 is_recording = True
-                logging.info(f"Recording started at {ts_abs}ms (accumulated={accumulated_recorded_ms}ms so far)")
-            else:
-                # Stop current recording
-                if is_recording and recording_started_at is not None:
-                    delta = ts_abs - recording_started_at
-                    accumulated_recorded_ms += delta
-                    logging.info(
-                        f"Recording stopped at {ts_abs}ms, segment length={delta}ms, "
-                        f"accumulated={accumulated_recorded_ms}ms"
-                    )
+            else:                       # recording stopped
+                if is_recording and rec_abs_start is not None:
+                    rec_ms_accum += ts_abs - rec_abs_start
+                    # close still‑open talks in this segment
+                    for uid, start in list(ongoing.items()):
+                        if rec_ms_accum - start >= MIN_TALK_MS:
+                            talk_intervals.setdefault(uid, []).append(
+                                (start, rec_ms_accum)
+                            )
+                        del ongoing[uid]
                 is_recording = False
-                recording_started_at = None
+                rec_abs_start = None
+            continue
 
-        # 3) ParticipantTalkingEvent => user started/stopped talking
-        elif eventname == "ParticipantTalkingEvent":
-            talking_str = ev.findtext('talking')
-            participant_id = ev.findtext('participant')
-            if not talking_str or not participant_id:
+        # 3) talking on/off
+        if ev_name == "ParticipantTalkingEvent" and is_recording and rec_abs_start is not None:
+            uid = ev.findtext("participant")
+            talking = (ev.findtext("talking") or "").lower() == "true"
+            if not uid:
                 continue
+            rec_now = rec_ms_accum + (ts_abs - rec_abs_start)
 
-            user_is_talking = (talking_str.lower() == 'true')
-            if is_recording and recording_started_at is not None:
-                offset_in_this_segment = ts_abs - recording_started_at
-                event_actual_time = accumulated_recorded_ms + offset_in_this_segment
+            # DEBUG: uncomment next line to trace talk edges
+            # print(f"{user_map.get(uid,'Unknown')}, {ts_abs}, {rec_now}")
 
-                if user_is_talking:
-                    ongoing_talk[participant_id] = event_actual_time
-                    logging.debug(f"User {participant_id} started talking at {event_actual_time}ms (abs={ts_abs})")
-                else:
-                    start_time = ongoing_talk.pop(participant_id, None)
-                    if start_time is not None:
-                        if participant_id not in talk_intervals:
-                            talk_intervals[participant_id] = []
-                        talk_intervals[participant_id].append((start_time, event_actual_time))
-                        logging.debug(f"User {participant_id} stopped talking at {event_actual_time}ms (abs={ts_abs}). "
-                                      f"Interval=({start_time}, {event_actual_time})")
+            if talking:
+                ongoing[uid] = rec_now
+            else:
+                start = ongoing.pop(uid, None)
+                if start is not None and rec_now - start >= MIN_TALK_MS:
+                    talk_intervals.setdefault(uid, []).append((start, rec_now))
 
-        # else ignore other events
+    # flush at end of file
+    for uid, start in ongoing.items():
+        if rec_ms_accum - start >= MIN_TALK_MS:
+            talk_intervals.setdefault(uid, []).append((start, rec_ms_accum))
+
+    # ------------------------------------------------------------------
+    # Merge close intervals for same speaker (gap ≤ MERGE_GAP_MS)
+    # ------------------------------------------------------------------
+    for uid, lst in talk_intervals.items():
+        lst.sort()
+        merged = []
+        s, e = lst[0]
+        for ns, ne in lst[1:]:
+            if ns - e <= MERGE_GAP_MS:
+                e = max(e, ne)
+            else:
+                merged.append((s, e))
+                s, e = ns, ne
+        merged.append((s, e))
+        talk_intervals[uid] = merged
 
     return user_map, talk_intervals
 
-def parse_time_str_to_millis(time_str):
-    """
-    Convert 'HH:MM:SS.sss' -> total ms, e.g. '00:00:09.400' => 9400
-    """
-    hh, mm, ssms = time_str.split(':')
-    ss, ms = ssms.split('.')
-    return ((int(hh) * 3600) + (int(mm) * 60) + int(ss)) * 1000 + int(ms)
+# ---------------------------------------------------------------------------
+# 2. Merge transcript with speaker labels (context‑smoothed)
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 2. Merge transcript with speaker labels – COLLAPSE consecutive lines
+# ---------------------------------------------------------------------------
 
-def merge_speakers_with_transcript(transcript_file, user_map, talk_intervals, output_file):
+def merge_speakers_with_transcript(transcript_file: str,
+                                   user_map: Dict[str, str],
+                                   talk_intervals: Dict[str, List[Tuple[int, int]]],
+                                   output_file: str):
     """
-    Read lines of form:
-      [HH:MM:SS.sss HH:MM:SS.sss] Some text
-    -> produce:
-      [HH:MM:SS.sss HH:MM:SS.sss] <speaker name>: Some text
-    by matching times to user talk intervals in naive overlap.
+    Attach a speaker label to every caption line, but if the same speaker
+    keeps talking, merge consecutive captions into one block:
+
+        [start end] Speaker:
+        line‑1
+        line‑2
+        …
+
+    start = first caption’s start; end = last caption’s end.
     """
-    all_intervals = []
-    for uid, intervals in talk_intervals.items():
-        for (st, en) in intervals:
-            all_intervals.append((uid, st, en))
-    all_intervals.sort(key=lambda x: x[1])  # sort by start time
 
-    logging.info(f"Found {len(all_intervals)} talk intervals. Merging with transcript...")
+    # ------------------------------------------------------ helpers
+    total_ms = {u: sum(e - s for s, e in lst) for u, lst in talk_intervals.items()}
 
-    pattern = re.compile(r'^\[(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\]\s+(.*)$')
-    output_lines = []
+    flat: List[Tuple[str, int, int]] = [
+        (u, s, e) for u, lst in talk_intervals.items() for (s, e) in lst
+    ]
+    flat.sort(key=lambda x: x[1])          # by interval start
 
-    with open(transcript_file, 'r', encoding='utf-8') as fin:
-        for line in fin:
-            line = line.rstrip()
-            if not line:
+    cap_rx = re.compile(
+        r"^\[(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\]\s+(.*)$")
+
+    def ms(ts: str) -> int:
+        return parse_time_str_to_millis(ts)
+
+    # ------------------------------------------------------ main loop
+    out_blocks: List[str] = []
+    cur_uid, cur_name = None, None
+    cur_t0, cur_t1 = None, None
+    cur_text_lines: List[str] = []
+
+    prev_uid = None
+
+    def flush_block():
+        if cur_name is None:
+            return
+        header = f"[{cur_t0} {cur_t1}] {cur_name}:"
+        out_blocks.append(header)
+        out_blocks.extend(cur_text_lines)
+
+    with open(transcript_file, encoding="utf-8") as fin:
+        for raw in fin:
+            raw = raw.rstrip("\n")
+            m = cap_rx.match(raw)
+            if not m:
+                # non‑caption line → flush any open block first
+                flush_block()
+                cur_uid = cur_name = None
+                cur_text_lines.clear()
+                out_blocks.append(raw)
                 continue
 
-            match = pattern.match(line)
-            if not match:
-                # if line doesn't match the pattern, just keep it as-is
-                output_lines.append(line)
-                continue
+            s_str, e_str, text_body = m.groups()
+            s_ms, e_ms = ms(s_str), ms(e_str)
+            dur = max(1, e_ms - s_ms)
 
-            start_str, end_str, text_content = match.groups()
-            start_ms = parse_time_str_to_millis(start_str)
-            end_ms   = parse_time_str_to_millis(end_str)
-
-            # naive overlap approach: pick the first user interval that overlaps
-            speaker_id = None
-            for (uid, s_val, e_val) in all_intervals:
-                # overlap check
-                if not (end_ms < s_val or start_ms > e_val):
-                    speaker_id = uid
+            # -------- find overlaps
+            overlaps: Dict[str, int] = {}
+            for uid, s, e in flat:
+                if e < s_ms:
+                    continue
+                if s > e_ms:
                     break
+                ov = max(0, min(e, e_ms) - max(s, s_ms))
+                if ov:
+                    overlaps[uid] = overlaps.get(uid, 0) + ov
 
-            if speaker_id and speaker_id in user_map:
-                speaker_name = user_map[speaker_id]
+            # -------- choose speaker (same rules as before)
+            speaker_uid: str | None = None
+            if overlaps:
+                ranked = sorted(overlaps.items(), key=lambda kv: kv[1], reverse=True)
+                best_uid, best_ms = ranked[0]
+                best_frac = best_ms / dur
+                second_ms = ranked[1][1] if len(ranked) > 1 else 0
+                close = (best_ms - second_ms) / dur < TIE_MARGIN
+                low_conf = best_frac < LOW_CONF_FRAC
+
+                if (close or low_conf) and prev_uid in overlaps:
+                    speaker_uid = prev_uid
+                elif close and len(ranked) > 1:
+                    speaker_uid = max(ranked[:2], key=lambda kv: total_ms.get(kv[0], 0))[0]
+                else:
+                    speaker_uid = best_uid
             else:
-                speaker_name = "Unknown Speaker"
+                # no overlap: nearest interval fallback
+                nearest_uid, nearest_dist = None, float("inf")
+                for uid, s, e in flat:
+                    dist = s - e_ms if s >= s_ms else s_ms - e
+                    if dist < nearest_dist:
+                        nearest_uid, nearest_dist = uid, dist
+                    if s > e_ms and dist > nearest_dist:
+                        break
+                speaker_uid = nearest_uid or prev_uid
 
-            new_line = f"[{start_str} {end_str}] {speaker_name}: {text_content}"
-            output_lines.append(new_line)
+            speaker_name = user_map.get(speaker_uid, "Unknown Speaker")
+            if speaker_name != "Unknown Speaker":
+                prev_uid = speaker_uid
 
-    with open(output_file, 'w', encoding='utf-8') as fout:
-        fout.write("\n".join(output_lines))
+            # -------- accumulate / flush blocks
+            if cur_uid == speaker_uid:                          # same speaker
+                cur_t1 = e_str                                  # extend block end
+                cur_text_lines.append(text_body)                # add new line
+            else:
+                flush_block()                                   # dump previous
+                # start new block
+                cur_uid = speaker_uid
+                cur_name = speaker_name
+                cur_t0, cur_t1 = s_str, e_str
+                cur_text_lines = [text_body]
 
-    logging.info(f"Speaker-labeled transcript created at {output_file}")
+    # flush tail
+    flush_block()
+
+    with open(output_file, "w", encoding="utf-8") as fout:
+        fout.write("\n".join(out_blocks))
+
+    logging.info("Speaker‑labeled transcript written to %s", output_file)
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
 
 def main():
-    if len(sys.argv) < 4:
-        print(f"Usage: python {sys.argv[0]} <events.xml> <input_transcript.txt> <output_speaker_transcript.txt>")
+    if len(sys.argv) != 4:
+        print(f"Usage: {sys.argv[0]} <events.xml> <input.txt> <output.txt>")
         sys.exit(1)
 
-    events_xml = sys.argv[1]
-    transcript_txt = sys.argv[2]
-    output_txt = sys.argv[3]
+    events_xml, transcript_in, transcript_out = sys.argv[1:4]
 
-    logging.info(f"Loading events from: {events_xml}")
-    user_map, talk_intervals = parse_xml_with_recording_segments(events_xml)
-    logging.info(f"Found {len(user_map)} user(s), intervals for {len(talk_intervals)} user(s).")
+    logging.info("Parsing events.xml …")
+    user_map, talk_ints = parse_xml_with_recording_segments(events_xml)
+    logging.info("Users: %d, intervals: %d", len(user_map), len(talk_ints))
 
-    if not user_map and not talk_intervals:
-        logging.warning("No speaker data found. Copying transcript unchanged.")
-        shutil.copy(transcript_txt, output_txt)
-        logging.info("Done. No speaker labels added.")
+    # 1) If events.xml is completely missing, bail out without writing anything
+    if not os.path.exists(events_xml):
+        logging.error("No events.xml at %s – skipping speaker merge.", events_xml)
         sys.exit(0)
 
-    merge_speakers_with_transcript(transcript_txt, user_map, talk_intervals, output_txt)
-    logging.info("Done.")
+    if not talk_ints:
+        shutil.copy(transcript_in, transcript_out)
+        logging.warning("No intervals found – transcript copied unchanged.")
+        return
+
+    merge_speakers_with_transcript(transcript_in, user_map, talk_ints, transcript_out)
+
 
 if __name__ == "__main__":
     main()

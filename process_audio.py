@@ -136,8 +136,10 @@ async_send_webhook(webhook_data)
 #     print(f"Failed to send webhook: {str(e)}")
 
 # Step 8: Remove chunk directory after processing
-try:
-    shutil.rmtree(chunk_dir)  # Deletes the entire chunk directory
-    print(f"Successfully removed chunk directory: {chunk_dir}")
-except Exception as e:
-    print(f"Error removing chunk directory: {str(e)}")
+if os.path.exists(chunk_dir):
+    try:
+        subprocess.run(['rm', '-rf', chunk_dir], check=True)  # Deletes the entire chunk directory
+        print(f"Successfully removed chunk directory: {chunk_dir}")
+    except Exception as e:
+        print(f"Error removing chunk directory: {str(e)}")
+    subprocess.run(['sync'])
