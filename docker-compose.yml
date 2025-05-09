@@ -21,6 +21,12 @@ services:
       - /raw:/raw
       - .:/app
       - /var/run/docker.sock:/var/run/docker.sock # Mount Docker socket
+      - ./supervisord.conf:/etc/supervisor/supervisord.conf
+      - type: bind
+        source: ./supervisor-logs
+        target: /app/logs
+    env_file:
+      - .env
     ports:
       - "5000:5000"
     stdin_open: true

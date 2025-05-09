@@ -36,60 +36,102 @@ while true; do
 
     # Acquire a lock to ensure only one process handles this file at a time
     LOCK_KEY="${LOCK_PREFIX}${FILE_ID}"
-    LOCK_ACQUIRED=$($REDIS_CLI SET "$LOCK_KEY" "locked" NX EX 300)
+    LOCK_ACQUIRED=$($REDIS_CLI SET "$LOCK_KEY" "locked" NX EX 600)
 
     if [ "$LOCK_ACQUIRED" != "OK" ]; then
-        echo "File $FILE_ID is already being transcribed. Skipping."
+        echo "File $FILE_ID is already locked. Skipping."
         continue
     fi
 
     # Verify the audio file exists
     AUDIO_FILE="/app/queue/${FILE_ID}.ogg"
+    TXT_FILE="/transcripts/scripts/${FILE_ID}.txt"
+    SRT_FILE="/transcripts/scripts/${FILE_ID}.srt"
+    SPEAKERS_FILE="/transcripts/scripts/${FILE_ID}_speakers.txt"
+    SUMMARY_FILE="/transcripts/scripts/${FILE_ID}_summary.txt"
+
     if [ ! -f "$AUDIO_FILE" ]; then
         echo "Audio file $FILE_ID does not exist. Removing lock."
         $REDIS_CLI DEL "$LOCK_KEY"
         continue
     fi
 
-    # Perform the transcription (e.g., using Whisper)
-    python3 /app/process_audio.py "$AUDIO_FILE"
-    # this python3 command will take 10 minutes
-    TRANSCRIBE_EXIT_CODE=$?
+    FORCE_PROCESS=$($REDIS_CLI GET "force_process:${FILE_ID}")
 
-    if [ $TRANSCRIBE_EXIT_CODE -eq 0 ]; then
-        echo "Successfully transcribed $FILE_ID (from $QUEUE_FROM)."
-        # If you want to do anything specific based on QUEUE_FROM, you can add it here.
+   # Step 1: Transcription
+    TRANSCRIBE_EXIT_CODE=0
+    if [ "$FORCE_PROCESS" == "1" ]; then
+        echo "Force reprocessing $FILE_ID: doing fresh transcription..."
+        python3 /app/process_audio.py "$AUDIO_FILE" --force
+        TRANSCRIBE_EXIT_CODE=$?
+    elif [ -f "$TXT_FILE" ] && [ -f "$SRT_FILE" ]; then
+        echo "Transcription files already exist for $FILE_ID, skipping transcription."
     else
-        echo "Transcription failed for $FILE_ID (exit code: $TRANSCRIBE_EXIT_CODE)."
-        # Optionally handle failures (e.g., push to 'failed' queue) as desired.
+        echo "transcribing $FILE_ID..."
+        python3 /app/process_audio.py "$AUDIO_FILE"
+        TRANSCRIBE_EXIT_CODE=$?
     fi
 
-    echo "Running merge_speakers for $FILE_ID..."
-    python3 /app/merge_speakers.py \
-        "/raw/${FILE_ID}/events.xml" \
-        "/transcripts/scripts/${FILE_ID}.txt" \
-        "/transcripts/scripts/${FILE_ID}_speakers.txt"
+    if [ $TRANSCRIBE_EXIT_CODE -ne 0 ]; then
+        echo "Transcription failed for $FILE_ID, skipping merging/summarizing."
+        $REDIS_CLI DEL "$LOCK_KEY"
+        continue
+    fi
 
 
-    MERGE_EXIT_CODE=$?
-
-    if [ $MERGE_EXIT_CODE -eq 0 ]; then
-        echo "merge_speakers succeeded for $FILE_ID"
-    else
-        echo "merge_speakers failed for $FILE_ID (exit code: $MERGE_EXIT_CODE)"
+    # Checking size of the TXT file
+    if [ -f "$TXT_FILE" ]; then
+        size_bytes=$(stat -c%s "$TXT_FILE") #  get size in bytes
+        size_kb=$(awk "BEGIN { printf \"%.2f\", $size_bytes/1024 }") #convert to kilobytes (decimal KB)       
+        size_mb=$(awk "BEGIN { printf \"%.2f\", $size_bytes/1024/1024 }")  # convert to megabytes (decimal MB)
+        echo "Transcript size for $FILE_ID: ${size_mb} MB (${size_kb} KB)"
     fi
     
-    echo "Generating GPT summary for $FILE_ID …"
-    python3 /app/gpt_summary.py "$FILE_ID"
-    SUMMARY_EXIT=$?
-
-    if [ $SUMMARY_EXIT -eq 0 ]; then
-        echo "✅ Summary succeeded: /transcripts/scripts/${FILE_ID}_summary.txt"
+   # Step 2: Merge Speakers
+    MERGE_EXIT_CODE=0
+    if [ "$FORCE_PROCESS" == "1" ]; then
+        echo "Force reprocessing $FILE_ID: doing fresh speaker merging..."
+        python3 /app/merge_speakers.py \
+            "/raw/${FILE_ID}/events.xml" \
+            "$TXT_FILE" \
+            "$SPEAKERS_FILE" \
+            "/transcripts/scripts/${FILE_ID}_chat.txt"
+        MERGE_EXIT_CODE=$?
+    elif [ -f "$SPEAKERS_FILE" ]; then
+        echo "Speakers file already exists for $FILE_ID, skipping merging."
     else
-        echo "❌ Summary generation failed for $FILE_ID (exit code $SUMMARY_EXIT)"
+        echo "Speakers file missing, merging speakers for $FILE_ID..."
+        python3 /app/merge_speakers.py \
+            "/raw/${FILE_ID}/events.xml" \
+            "$TXT_FILE" \
+            "$SPEAKERS_FILE" \
+            "/transcripts/scripts/${FILE_ID}_chat.txt"
+        MERGE_EXIT_CODE=$?
     fi
 
+
+    # Step 3: GPT Summarization
+    SUMMARY_EXIT_CODE=0
+    if [ "$FORCE_PROCESS" == "1" ]; then
+        echo "Force reprocessing $FILE_ID: generating fresh summary..."
+        python3 /app/gpt_summary.py "$FILE_ID"
+        SUMMARY_EXIT_CODE=$?
+    elif [ -f "$SUMMARY_FILE" ]; then
+        echo "Summary file already exists for $FILE_ID, skipping summarization."
+    else
+        echo "Summary file missing, generating summary for $FILE_ID..."
+        python3 /app/gpt_summary.py "$FILE_ID"
+        SUMMARY_EXIT_CODE=$?
+    fi
+
+    if [ $SUMMARY_EXIT_CODE -eq 0 ]; then
+        echo "✅ Summary generated for $FILE_ID."
+    else
+        echo "❌ Summary failed for $FILE_ID."
+    fi
 
     # Release the lock
     $REDIS_CLI DEL "$LOCK_KEY"
+    $REDIS_CLI DEL "force_process:${FILE_ID}"
+    
 done

@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
-Merge speakers’ names into a BigBlueButton meeting transcript.
+Merge speakers’ names into a BigBlueButton meeting transcript,
+and optionally extract chat messages.
 
 Usage
 -----
+# just speaker merge:
 python merge_speakers.py <events.xml> <input_transcript.txt> <output_transcript.txt>
 
-The transcript must be in the form produced by Whisper / PyAnnote subtitles:
-
-    [HH:MM:SS.sss HH:MM:SS.sss] Spoken text …
-
-The script parses *events.xml* to discover who was talking when, then
-labels each transcript line with the user who spoke for the **most
-appropriate share** of that line’s time span, using robust tie‑breaking and
-context smoothing to handle overlapping microphones and short noises.
+# + chat extraction:
+python merge_speakers.py <events.xml> <input_transcript.txt> <output_transcript.txt> <chat_output.txt>
 """
 import logging
 import os
@@ -27,8 +23,8 @@ from typing import Dict, List, Tuple
 # Tunables – adjust for your environment / tolerance
 # ---------------------------------------------------------------------------
 MIN_TALK_MS   = 300     # discard talking bursts shorter than this
-MERGE_GAP_MS  = 200     # merge same‑speaker intervals whose gap ≤ this
-TIE_MARGIN    = 0.10    # when two speakers’ overlaps differ by <10 % of caption
+MERGE_GAP_MS  = 200     # merge same-speaker intervals whose gap ≤ this
+TIE_MARGIN    = 0.10    # when two speakers’ overlaps differ by <10 % of caption
 LOW_CONF_FRAC = 0.25    # "dominance" threshold; below ⇒ look at context
 
 # ---------------------------------------------------------------------------
@@ -42,7 +38,6 @@ logging.basicConfig(
 # ---------------------------------------------------------------------------
 # Helper: HH:MM:SS.mmm → ms
 # ---------------------------------------------------------------------------
-
 def parse_time_str_to_millis(time_str: str) -> int:
     hh, mm, ssms = time_str.split(":")
     ss, ms = ssms.split(".")
@@ -51,7 +46,6 @@ def parse_time_str_to_millis(time_str: str) -> int:
 # ---------------------------------------------------------------------------
 # 1. Extract talking intervals from events.xml
 # ---------------------------------------------------------------------------
-
 def parse_xml_with_recording_segments(xml_path: str):
     """Return (userId→displayName, userId→[(start_ms, end_ms), …])."""
 
@@ -92,7 +86,7 @@ def parse_xml_with_recording_segments(xml_path: str):
             else:                       # recording stopped
                 if is_recording and rec_abs_start is not None:
                     rec_ms_accum += ts_abs - rec_abs_start
-                    # close still‑open talks in this segment
+                    # close still-open talks in this segment
                     for uid, start in list(ongoing.items()):
                         if rec_ms_accum - start >= MIN_TALK_MS:
                             talk_intervals.setdefault(uid, []).append(
@@ -110,9 +104,6 @@ def parse_xml_with_recording_segments(xml_path: str):
             if not uid:
                 continue
             rec_now = rec_ms_accum + (ts_abs - rec_abs_start)
-
-            # DEBUG: uncomment next line to trace talk edges
-            # print(f"{user_map.get(uid,'Unknown')}, {ts_abs}, {rec_now}")
 
             if talking:
                 ongoing[uid] = rec_now
@@ -145,12 +136,8 @@ def parse_xml_with_recording_segments(xml_path: str):
     return user_map, talk_intervals
 
 # ---------------------------------------------------------------------------
-# 2. Merge transcript with speaker labels (context‑smoothed)
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # 2. Merge transcript with speaker labels – COLLAPSE consecutive lines
 # ---------------------------------------------------------------------------
-
 def merge_speakers_with_transcript(transcript_file: str,
                                    user_map: Dict[str, str],
                                    talk_intervals: Dict[str, List[Tuple[int, int]]],
@@ -160,33 +147,27 @@ def merge_speakers_with_transcript(transcript_file: str,
     keeps talking, merge consecutive captions into one block:
 
         [start end] Speaker:
-        line‑1
-        line‑2
+        line-1
+        line-2
         …
-
-    start = first caption’s start; end = last caption’s end.
     """
-
-    # ------------------------------------------------------ helpers
     total_ms = {u: sum(e - s for s, e in lst) for u, lst in talk_intervals.items()}
-
     flat: List[Tuple[str, int, int]] = [
         (u, s, e) for u, lst in talk_intervals.items() for (s, e) in lst
     ]
-    flat.sort(key=lambda x: x[1])          # by interval start
+    flat.sort(key=lambda x: x[1])  # by interval start
 
     cap_rx = re.compile(
-        r"^\[(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\]\s+(.*)$")
+        r"^\[(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\]\s+(.*)$"
+    )
 
     def ms(ts: str) -> int:
         return parse_time_str_to_millis(ts)
 
-    # ------------------------------------------------------ main loop
     out_blocks: List[str] = []
-    cur_uid, cur_name = None, None
-    cur_t0, cur_t1 = None, None
+    cur_uid = cur_name = None
+    cur_t0 = cur_t1 = None
     cur_text_lines: List[str] = []
-
     prev_uid = None
 
     def flush_block():
@@ -201,7 +182,6 @@ def merge_speakers_with_transcript(transcript_file: str,
             raw = raw.rstrip("\n")
             m = cap_rx.match(raw)
             if not m:
-                # non‑caption line → flush any open block first
                 flush_block()
                 cur_uid = cur_name = None
                 cur_text_lines.clear()
@@ -212,7 +192,7 @@ def merge_speakers_with_transcript(transcript_file: str,
             s_ms, e_ms = ms(s_str), ms(e_str)
             dur = max(1, e_ms - s_ms)
 
-            # -------- find overlaps
+            # find overlaps
             overlaps: Dict[str, int] = {}
             for uid, s, e in flat:
                 if e < s_ms:
@@ -223,8 +203,8 @@ def merge_speakers_with_transcript(transcript_file: str,
                 if ov:
                     overlaps[uid] = overlaps.get(uid, 0) + ov
 
-            # -------- choose speaker (same rules as before)
-            speaker_uid: str | None = None
+            # choose speaker
+            speaker_uid = None
             if overlaps:
                 ranked = sorted(overlaps.items(), key=lambda kv: kv[1], reverse=True)
                 best_uid, best_ms = ranked[0]
@@ -236,11 +216,12 @@ def merge_speakers_with_transcript(transcript_file: str,
                 if (close or low_conf) and prev_uid in overlaps:
                     speaker_uid = prev_uid
                 elif close and len(ranked) > 1:
-                    speaker_uid = max(ranked[:2], key=lambda kv: total_ms.get(kv[0], 0))[0]
+                    speaker_uid = max(ranked[:2],
+                                      key=lambda kv: total_ms.get(kv[0], 0))[0]
                 else:
                     speaker_uid = best_uid
             else:
-                # no overlap: nearest interval fallback
+                # no overlap: nearest‐interval fallback
                 nearest_uid, nearest_dist = None, float("inf")
                 for uid, s, e in flat:
                     dist = s - e_ms if s >= s_ms else s_ms - e
@@ -254,42 +235,74 @@ def merge_speakers_with_transcript(transcript_file: str,
             if speaker_name != "Unknown Speaker":
                 prev_uid = speaker_uid
 
-            # -------- accumulate / flush blocks
-            if cur_uid == speaker_uid:                          # same speaker
-                cur_t1 = e_str                                  # extend block end
-                cur_text_lines.append(text_body)                # add new line
+            # accumulate / flush blocks
+            if cur_uid == speaker_uid:
+                cur_t1 = e_str
+                cur_text_lines.append(text_body)
             else:
-                flush_block()                                   # dump previous
-                # start new block
+                flush_block()
                 cur_uid = speaker_uid
                 cur_name = speaker_name
                 cur_t0, cur_t1 = s_str, e_str
                 cur_text_lines = [text_body]
 
-    # flush tail
     flush_block()
 
     with open(output_file, "w", encoding="utf-8") as fout:
         fout.write("\n".join(out_blocks))
 
-    logging.info("Speaker‑labeled transcript written to %s", output_file)
+    logging.info("Speaker-labeled transcript written to %s", output_file)
 
 # ---------------------------------------------------------------------------
-# main
+# NEW: 3. Extract chat messages from events.xml → <chat_output.txt>
 # ---------------------------------------------------------------------------
+def extract_chat_events(xml_path: str,
+                        user_map: Dict[str, str],
+                        chat_out_path: str) -> None:
+    """
+    Scan for all <event eventname="PublicChatEvent"> entries and write lines like:
+      [2025-04-24T18:56:36.798Z][Alice]: Hello everyone!
+    """
+    if not os.path.exists(xml_path):
+        logging.error("events.xml not found: %s", xml_path)
+        return
 
+    root = ET.parse(xml_path).getroot()
+    events = root.findall("event")
+    chat_lines: List[str] = []
+
+    for ev in events:
+        if ev.get("eventname") == "PublicChatEvent":
+            # prefer the human‐readable <date>, fallback to the raw attribute
+            timestamp = ev.findtext("date") or ev.get("timestamp", "")
+            sid = ev.findtext("senderId") or ""
+            name = user_map.get(sid, sid or "Unknown")
+            msg = ev.findtext("message") or ""
+            chat_lines.append(f"[{timestamp}][{name}]: {msg}")
+
+    # write them out in chronological order
+    with open(chat_out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(chat_lines))
+    logging.info("Chat events written to %s", chat_out_path)
+
+# ---------------------------------------------------------------------------
+# main entrypoint
+# ---------------------------------------------------------------------------
 def main():
-    if len(sys.argv) != 4:
-        print(f"Usage: {sys.argv[0]} <events.xml> <input.txt> <output.txt>")
+    # allow either 3 or 4 positional args
+    if len(sys.argv) not in (4, 5):
+        print(f"Usage: {sys.argv[0]} <events.xml> <input.txt> <output.txt> [<chat_output.txt>]")
         sys.exit(1)
 
-    events_xml, transcript_in, transcript_out = sys.argv[1:4]
+    events_xml = sys.argv[1]
+    transcript_in = sys.argv[2]
+    transcript_out = sys.argv[3]
+    chat_out = sys.argv[4] if len(sys.argv) == 5 else None
 
     logging.info("Parsing events.xml …")
     user_map, talk_ints = parse_xml_with_recording_segments(events_xml)
     logging.info("Users: %d, intervals: %d", len(user_map), len(talk_ints))
 
-    # 1) If events.xml is completely missing, bail out without writing anything
     if not os.path.exists(events_xml):
         logging.error("No events.xml at %s – skipping speaker merge.", events_xml)
         sys.exit(0)
@@ -297,10 +310,12 @@ def main():
     if not talk_ints:
         shutil.copy(transcript_in, transcript_out)
         logging.warning("No intervals found – transcript copied unchanged.")
-        return
+    else:
+        merge_speakers_with_transcript(transcript_in, user_map, talk_ints, transcript_out)
 
-    merge_speakers_with_transcript(transcript_in, user_map, talk_ints, transcript_out)
-
+    if chat_out:
+        logging.info("Extracting chat events …")
+        extract_chat_events(events_xml, user_map, chat_out)
 
 if __name__ == "__main__":
     main()

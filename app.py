@@ -3,30 +3,32 @@ import os
 import re
 import redis
 import requests
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv() 
 
 from webhook_utils import async_send_webhook  # <-- import here
 
 app = Flask(__name__)
 
 # Environment Variables
-AUTH_KEY = "JcviID7zUMoEuFmSN0GT043XisDda4eppRRyCCS3y0"
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")  # Redis runs as a separate container
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+AUTH_KEY = os.getenv("AUTH_KEY")
+REDIS_HOST = os.getenv("REDIS_HOST")  # Redis runs as a separate container
+REDIS_PORT = int(os.getenv("REDIS_PORT"))
 
 # Connect to Redis
 redis_client = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
 
 # File Paths
-UPLOAD_FOLDER = "/app/queue"
-TRANSCRIPTS_QUEUE_FOLDER = "/transcripts/queue"
-TRANSCRIPTS_SCRIPT_FOLDER = "/transcripts/scripts"
-# WEBHOOK_URL = "https://biggerbluebutton.com/mobile/webhook/audio-processed"
-# WEBHOOK_URL = "https://540c-86-98-4-252.ngrok-free.app/mobile/webhook/audio-processed"
-
+UPLOAD_FOLDER = Path(os.getenv("UPLOAD_FOLDER"))
+TRANSCRIPTS_SCRIPT_FOLDER = Path(os.getenv("TRANSCRIPTS_FOLDER"))
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(TRANSCRIPTS_QUEUE_FOLDER, exist_ok=True)
 os.makedirs(TRANSCRIPTS_SCRIPT_FOLDER, exist_ok=True)
+
+def file_exists(file_path):
+    return os.path.exists(file_path)
 
 @app.route("/", methods=["GET"])
 def index():
@@ -50,6 +52,8 @@ def process_audio():
         api_key = data.get("api_key")
         full_url = data.get("url")
         priority = data.get("priority", "low").lower()
+        retry_all = data.get("retry_all", False)
+
 
         if api_key != AUTH_KEY:
             return jsonify({"status": "unauthorized", "error": "Invalid API key"}), 401
@@ -63,27 +67,39 @@ def process_audio():
 
         file_id = match.group(1)
 
+        print(f"[Request] Received meeting_id: {file_id}")
+        
         # File Paths
-        srt_file_path = os.path.join(TRANSCRIPTS_SCRIPT_FOLDER, f"{file_id}.srt")
+        summary_file_path = os.path.join(TRANSCRIPTS_SCRIPT_FOLDER, f"{file_id}_summary.txt")
         txt_file_path = os.path.join(TRANSCRIPTS_SCRIPT_FOLDER, f"{file_id}.txt")
 
+        if not retry_all:
         # Check if already processed
-        if os.path.exists(srt_file_path) and os.path.exists(txt_file_path):
-            webhook_data = {
-                "file_id": file_id,
-                "script": f"https://biggerbluebutton.com/playback/transcripts/{file_id}.txt",
-                "status": "done"
-            }
-            async_send_webhook(webhook_data)
-            return jsonify({"status": "done", "message": "File already processed"}), 200
+            if file_exists(txt_file_path) and file_exists(summary_file_path):
+                webhook_data = {
+                    "file_id": file_id,
+                    "script":  Path(os.getenv("BBB_URL")) /f"{file_id}.txt",
+                    "status": "done"
+                }
+                async_send_webhook(webhook_data)
+                return jsonify({"status": "done", "message": "File already processed"}), 200
 
-        # 2) Check if file is locked => means it is currently being split or transcribed
+        # Check if file is locked => means it is currently being split or transcribed
         lock_key = f"lock:{file_id}"
-        if redis_client.exists(lock_key):
+        if redis_client.exists(lock_key) and not retry_all:
             return jsonify({"status": "in_process", "message": "File is currently processing"}), 409
         
-        # 3) Check if file is in ANY Redis queue
-        #    We'll handle each scenario based on the requested logic.
+        # Manage retry
+        if retry_all:
+            redis_client.set(f"force_process:{file_id}", "1", ex=3600)
+
+        file_path = os.path.join(UPLOAD_FOLDER, f"{file_id}.ogg")
+        if not os.path.exists(file_path) or retry_all:
+            if not download_file(full_url, file_path):
+                return jsonify({"status": "error", "error": "Failed to download audio file"}), 500
+
+        # Check if file is in ANY Redis queue
+        # We'll handle each scenario based on the requested logic.
         all_queues = ["split_high", "split_low", "whisper_high", "whisper_low"]
         for q in all_queues:
             queue_items = redis_client.lrange(q, 0, -1)
@@ -119,19 +135,22 @@ def process_audio():
                         return jsonify({"status": "in_process",
                                         "message": f"File already queued in {q}"}), 200
 
-        # 4) If we reach here, the file is not processed yet, not locked, and not in a queue
-        # Download the file
-        file_path = os.path.join(UPLOAD_FOLDER, f"{file_id}.ogg")
-        if not download_file(full_url, file_path):
-            return jsonify({"status": "error", "error": "Failed to download audio file"}), 500
-
         # 5) Push to the correct queue based on priority
-        if priority == "high":
-            redis_client.lpush("split_high", file_id)
-            return jsonify({"status": "processing", "message": "File queued in split_high"}), 200
+        if not file_exists(txt_file_path) or retry_all:
+            if priority == "high":
+                redis_client.lpush("split_high", file_id)
+                return jsonify({"status": "processing", "message": "File queued in split_high"}), 200
+            else:
+                redis_client.lpush("split_low", file_id)
+                return jsonify({"status": "processing", "message": "File queued in split_low"}), 200
         else:
-            redis_client.lpush("split_low", file_id)
-            return jsonify({"status": "processing", "message": "File queued in split_low"}), 200
+            if priority == "high":
+                redis_client.lpush("whisper_high", file_id)
+                return jsonify({"status": "processing", "message": "File queued in whisper_high"}), 200
+            else:
+                redis_client.lpush("whisper_low", file_id)
+                return jsonify({"status": "processing", "message": "File queued in whisper_low"}), 200
+    
     
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
@@ -147,14 +166,6 @@ def download_file(url, path):
         return True
     except requests.RequestException:
         return False
-
-
-# def send_webhook(data):
-#     try:
-#         response = requests.post(WEBHOOK_URL, json=data, headers={"Content-Type": "application/json"})
-#         response.raise_for_status()
-#     except requests.RequestException as e:
-#         print(f"Failed to send webhook: {str(e)}")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

@@ -1,9 +1,13 @@
 # webhook_utils.py
+import os
 import threading
 import requests
+from dotenv import load_dotenv
+from pathlib import Path
+load_dotenv() 
 
 # WEBHOOK_URL = "https://540c-86-98-4-252.ngrok-free.app/mobile/webhook/audio-processed"
-WEBHOOK_URL = "https://biggerbluebutton.com/mobile/webhook/audio-processed"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 def async_send_webhook(data):
     """Send the webhook in a separate thread to avoid blocking."""

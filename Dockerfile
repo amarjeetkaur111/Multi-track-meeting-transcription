@@ -34,13 +34,13 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 RUN pip install --no-cache-dir git+https://github.com/openai/whisper.git
 
 # Install additional dependencies
-RUN pip install -U flask flask-cors requests srt redis # <-- Added Redis dependencies
+RUN pip install -U flask flask-cors requests srt redis 
 
 # Optional: Install Faster-Whisper for better performance
 RUN pip install --no-cache-dir faster-whisper
 
 # Install OpenAI and other dependencies
-RUN pip install --upgrade openai pysrt tiktoken
+RUN pip install --upgrade openai pysrt tiktoken python-dotenv
 
 # Ensure necessary directories exist inside the container
 RUN mkdir -p /app/queue /app/scripts

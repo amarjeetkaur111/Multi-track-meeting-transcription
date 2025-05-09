@@ -10,10 +10,15 @@ import requests
 import torch
 
 from webhook_utils import async_send_webhook  # <-- import here
+from dotenv import load_dotenv
+from pathlib import Path
+
 
 if len(sys.argv) < 2:
     print("Usage: python process_audio.py <audio_file>")
     sys.exit(1)
+    
+load_dotenv() 
 
 # Ensure /transcripts/scripts/ exists before copying final files
 os.makedirs("/transcripts/scripts", exist_ok=True)
@@ -24,10 +29,11 @@ base_name = os.path.splitext(os.path.basename(input_file))[0]
 chunk_dir = f"/app/chunks/{base_name}"  # Store chunks in /app/chunks/<audio_filename>/
 output_srt = f"/app/scripts/{base_name}.srt"
 output_txt = f"/app/scripts/{base_name}.txt"
-queue_file = f"/transcripts/queue/{base_name}.txt"
-done_file = f"/transcripts/done/{base_name}.txt"
-final_srt_transcripts = f"/transcripts/scripts/{base_name}.srt"
-final_txt_transcripts = f"/transcripts/scripts/{base_name}.txt"
+queue_file = Path(os.getenv("TRANSCRIPTS_QUEUE")) /f"{base_name}.txt"
+done_file = Path(os.getenv("TRANSCRIPTS_DONE")) /f"{base_name}.txt"
+final_srt_transcripts = Path(os.getenv("TRANSCRIPTS_FOLDER")) /f"{base_name}.srt"
+final_txt_transcripts = Path(os.getenv("TRANSCRIPTS_FOLDER")) /f"{base_name}.txt"
+
 
 # Laravel webhook URL
 # WEBHOOK_URL = "https://540c-86-98-4-252.ngrok-free.app/mobile/webhook/audio-processed"
@@ -119,21 +125,17 @@ if os.path.exists(queue_file):
 
 print(f"Final transcript saved to {output_srt}")
 print(f"Converted text file saved to {output_txt}")
+print(f"Sending Webhook for transcript: {base_name}")
 
 # Send Webhook Notification to Laravel
+bbbUrl = os.getenv("BBB_URL")
 webhook_data = {
     "file_id": base_name,
-    "script": f"https://biggerbluebutton.com/playback/transcripts/{base_name}.txt",
-    "status": "done"
+    "script": f"{bbbUrl.rstrip('/')}/{base_name}.txt",
+    "status": "done",
+    "type": "transcript"
 }
 async_send_webhook(webhook_data)
-
-# try:
-#     response = requests.post(WEBHOOK_URL, json=webhook_data, headers={"Content-Type": "application/json"})
-#     response.raise_for_status()
-#     print(f"Webhook sent successfully: {response.status_code}")
-# except requests.RequestException as e:
-#     print(f"Failed to send webhook: {str(e)}")
 
 # Step 8: Remove chunk directory after processing
 if os.path.exists(chunk_dir):
