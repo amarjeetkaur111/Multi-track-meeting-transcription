@@ -1,13 +1,21 @@
 import os
 import sys
 import subprocess
-import whisper
 import srt
 import datetime
 import shutil
 import re
 import requests
 import torch
+
+WHISPER_BACKEND = os.getenv("WHISPER_BACKEND", "open_source").lower()
+
+if WHISPER_BACKEND == "azure":
+    from openai import AzureOpenAI
+    print("Using Azure Whisper backend")
+else:
+    import whisper
+    print("Using local Whisper backend")
 
 from webhook_utils import async_send_webhook  # <-- import here
 from dotenv import load_dotenv
@@ -44,13 +52,22 @@ final_txt_transcripts = Path(os.getenv("TRANSCRIPTS_FOLDER")) /f"{base_name}.txt
 # Step 2: Split the audio file into chunks
 # subprocess.run(["/app/split_audio.sh", input_file], check=True)
 
-# Step 3: Process each chunk with Whisper AI
-model = whisper.load_model(
-    "turbo",
-    download_root="/root/.cache/whisper",
-    device="cuda",
-)
+# Step 3: Process each chunk with Whisper AI or Azure Whisper
 srt_files = []
+
+if WHISPER_BACKEND == "azure":
+    azure_client = AzureOpenAI(
+        azure_endpoint=os.getenv("AZURE_WHISPER_ENDPOINT", "").rstrip("/"),
+        api_key=os.getenv("AZURE_WHISPER_KEY"),
+        api_version=os.getenv("AZURE_WHISPER_API_VERSION"),
+    )
+    azure_deployment = os.getenv("AZURE_WHISPER_DEPLOYMENT")
+else:
+    model = whisper.load_model(
+        "turbo",
+        download_root="/root/.cache/whisper",
+        device="cuda",
+    )
 
 for chunk in sorted(os.listdir(chunk_dir)):
     chunk_path = os.path.join(chunk_dir, chunk)
@@ -60,17 +77,33 @@ for chunk in sorted(os.listdir(chunk_dir)):
     if not chunk.endswith(".ogg"):  # Skip non-audio files
         continue
 
-    result = model.transcribe(chunk_path)
-    segments = result["segments"]
+    if WHISPER_BACKEND == "azure":
+        with open(chunk_path, "rb") as audio_file:
+            resp = azure_client.audio.transcriptions.create(
+                file=audio_file,
+                model=azure_deployment,
+                response_format="verbose_json",
+            )
+        segments = resp.segments
+    else:
+        result = model.transcribe(chunk_path)
+        segments = result["segments"]
 
     subs = []
     for i, segment in enumerate(segments):
-        start_time = datetime.timedelta(seconds=segment["start"])
-        end_time = datetime.timedelta(seconds=segment["end"])
+        if isinstance(segment, dict):
+            start = segment.get("start")
+            end = segment.get("end")
+            text = segment.get("text")
+        else:
+            start = getattr(segment, "start")
+            end = getattr(segment, "end")
+            text = getattr(segment, "text")
+
+        start_time = datetime.timedelta(seconds=start)
+        end_time = datetime.timedelta(seconds=end)
         subs.append(
-            srt.Subtitle(
-                index=i, start=start_time, end=end_time, content=segment["text"]
-            )
+            srt.Subtitle(index=i, start=start_time, end=end_time, content=text)
         )
 
     with open(srt_path, "w") as f:
