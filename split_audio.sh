@@ -14,6 +14,7 @@ fi
 input_file="$1"
 base_name="$(basename -- "$input_file" .${input_file##*.})"
 output_dir="/app/chunks/${base_name}"  # Updated chunk storage location
+rm -rf "$output_dir"
 mkdir -p "$output_dir"
 
 silence_info=$(ffmpeg -y -i "$input_file" -af "silencedetect=noise=-25dB:d=10" -f null - 2>&1 | \
@@ -41,7 +42,7 @@ for (( i=0; i<num_silence; i+=2 )); do
     output_file="$output_dir/${start_time_us}_${chunk_index}.ogg"  # Correct file naming
 
     if (( $(echo "$duration > 0" | bc -l) )); then
-        ffmpeg -i "$input_file" -ss "$start_time" -t "$duration" -c:a libvorbis "$output_file" &
+        ffmpeg -y -i "$input_file" -ss "$start_time" -t "$duration" -c:a libvorbis "$output_file" &
         ((job_count++))
     fi
 
@@ -60,7 +61,7 @@ start_time_us=$(echo "$start_time * 1000" | bc | cut -d'.' -f1)
 output_file="$output_dir/${start_time_us}_${chunk_index}.ogg"
 
 if (( $(echo "$remaining_duration > 0" | bc -l) )); then
-    ffmpeg -i "$input_file" -ss "$start_time" -c:a libvorbis "$output_file" &
+    ffmpeg -y -i "$input_file" -ss "$start_time" -c:a libvorbis "$output_file" &
 fi
 
 wait

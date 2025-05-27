@@ -35,19 +35,8 @@ while true; do
 
         # Restart container if max retries reached
         if [ "$FAILURE_COUNT" -ge "$MAX_RETRIES" ]; then
-            log_message "Max retries reached. Restarting container '$CONTAINER_NAME'..."
-
-            # Restart only the whisper-priority-container
-            docker restart "$CONTAINER_NAME" >/dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                log_message "Successfully restarted container '$CONTAINER_NAME'."
-            else
-                log_message "Failed to restart container '$CONTAINER_NAME'. Check Docker permissions."
-            fi
-
-            # Exit to avoid running in a restarting container
-            log_message "Exiting watchdog script after restart."
-            exit 1
+            log_message "[$(date '+%Y-%m-%d %H:%M:%S')] [GPU Watchdog] Max retries reached. Restarting container by killing PID 1..." | tee -a /app/gpu_watchdog.log
+            kill 1
         fi
     fi
 

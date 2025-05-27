@@ -31,7 +31,7 @@ services:
       - "5000:5000"
     stdin_open: true
     tty: true
-    restart: unless-stopped
+    restart: always
     command: sh -c "rm -rf /app/*.log && supervisord -c /etc/supervisor/conf.d/supervisord.conf -n"
 
   redis:

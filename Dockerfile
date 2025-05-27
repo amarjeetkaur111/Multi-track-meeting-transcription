@@ -37,10 +37,10 @@ RUN pip install --no-cache-dir git+https://github.com/openai/whisper.git
 RUN pip install -U flask flask-cors requests srt redis 
 
 # Optional: Install Faster-Whisper for better performance
-RUN pip install --no-cache-dir faster-whisper
+RUN pip install --no-cache-dir openai>=1.14 faster-whisper
 
 # Install OpenAI and other dependencies
-RUN pip install --upgrade openai pysrt tiktoken python-dotenv
+RUN pip install --upgrade pysrt tiktoken python-dotenv
 
 # Ensure necessary directories exist inside the container
 RUN mkdir -p /app/queue /app/scripts

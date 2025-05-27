@@ -22,3 +22,4 @@ redis_data/
 
 node_modules/
 __pycache__/
+.env
