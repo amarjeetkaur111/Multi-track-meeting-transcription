@@ -8,7 +8,14 @@ import re
 import requests
 import torch
 
+from webhook_utils import async_send_webhook  # <-- import here
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv() 
+
 WHISPER_BACKEND = os.getenv("WHISPER_BACKEND", "open_source").lower()
+print(f"Env Value: {WHISPER_BACKEND}")  
 
 if WHISPER_BACKEND == "azure":
     from openai import AzureOpenAI
@@ -17,16 +24,12 @@ else:
     import whisper
     print("Using local Whisper backend")
 
-from webhook_utils import async_send_webhook  # <-- import here
-from dotenv import load_dotenv
-from pathlib import Path
 
 
 if len(sys.argv) < 2:
     print("Usage: python process_audio.py <audio_file>")
     sys.exit(1)
     
-load_dotenv() 
 
 # Ensure /transcripts/scripts/ exists before copying final files
 os.makedirs("/transcripts/scripts", exist_ok=True)
