@@ -66,7 +66,7 @@ process_once() {
     elif [ -f "$TXT_FILE" ] && [ -f "$SRT_FILE" ]; then
         echo "Transcription files already exist for $FILE_ID, skipping transcription."
     else
-        echo "transcribing $FILE_ID..."
+        echo "transcribing using $BACKEND $FILE_ID..."
         WHISPER_BACKEND="$BACKEND" python3 /app/process_audio.py "$AUDIO_FILE"
         TRANSCRIBE_EXIT_CODE=$?
     fi
@@ -111,16 +111,28 @@ process_once() {
 
     # Step 3: GPT Summarization
     SUMMARY_EXIT_CODE=0
-    if [ "$FORCE_PROCESS" == "1" ]; then
-        echo "Force reprocessing $FILE_ID: generating fresh summary..."
-        python3 /app/gpt_summary.py "$FILE_ID"
-        SUMMARY_EXIT_CODE=$?
-    elif [ -f "$SUMMARY_FILE" ]; then
+    if [ -f "$SUMMARY_FILE" ] && [ "$FORCE_PROCESS" != "1" ]; then
         echo "Summary file already exists for $FILE_ID, skipping summarization."
     else
-        echo "Summary file missing, generating summary for $FILE_ID..."
-        python3 /app/gpt_summary.py "$FILE_ID"
-        SUMMARY_EXIT_CODE=$?
+        if [ -f "$SPEAKERS_FILE" ]; then
+            word_count=$(wc -w < "$SPEAKERS_FILE")
+        else
+            word_count=0
+        fi
+
+        if [ "$word_count" -lt 500 ]; then
+            echo "Transcript has only $word_count words. Skipping summarization."
+            echo "File was too small to summarize." > "$SUMMARY_FILE"
+            SUMMARY_EXIT_CODE=0
+        else
+            if [ "$FORCE_PROCESS" == "1" ]; then
+                echo "Force reprocessing $FILE_ID: generating fresh summary..."
+            else
+                echo "Summary file missing, generating summary for $FILE_ID..."
+            fi
+            python3 /app/gpt_summary.py "$FILE_ID"
+            SUMMARY_EXIT_CODE=$?
+        fi
     fi
 
     if [ $SUMMARY_EXIT_CODE -eq 0 ]; then
