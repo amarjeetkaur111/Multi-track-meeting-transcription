@@ -6,13 +6,14 @@ QUEUE_HIGH="whisper_high"
 QUEUE_LOW="whisper_low"
 PAUSE_FILE="/app/pause_flag"
 
-while true; do
+process_once() {
+    local BACKEND="$1"
 
     # --- PAUSE CHECK ---
     if [ -f "$PAUSE_FILE" ]; then
         echo "Whisper paused. No new tasks will be picked."
         sleep 5
-        continue
+        return
     fi
     # --- END PAUSE CHECK ---
 
@@ -20,17 +21,15 @@ while true; do
     FILE_ID_HIGH=$($REDIS_CLI RPOP "$QUEUE_HIGH")
     if [ -n "$FILE_ID_HIGH" ]; then
         FILE_ID="$FILE_ID_HIGH"
-        QUEUE_FROM="$QUEUE_HIGH"
     else
         # If no file from high, then pop from low
         FILE_ID_LOW=$($REDIS_CLI RPOP "$QUEUE_LOW")
         if [ -n "$FILE_ID_LOW" ]; then
             FILE_ID="$FILE_ID_LOW"
-            QUEUE_FROM="$QUEUE_LOW"
         else
             echo "No files to transcribe."
             sleep 10
-            continue
+            return
         fi
     fi
 
@@ -40,7 +39,7 @@ while true; do
 
     if [ "$LOCK_ACQUIRED" != "OK" ]; then
         echo "File $FILE_ID is already locked. Skipping."
-        continue
+        return
     fi
 
     # Verify the audio file exists
@@ -53,7 +52,7 @@ while true; do
     if [ ! -f "$AUDIO_FILE" ]; then
         echo "Audio file $FILE_ID does not exist. Removing lock."
         $REDIS_CLI DEL "$LOCK_KEY"
-        continue
+        return
     fi
 
     FORCE_PROCESS=$($REDIS_CLI GET "force_process:${FILE_ID}")
@@ -62,31 +61,31 @@ while true; do
     TRANSCRIBE_EXIT_CODE=0
     if [ "$FORCE_PROCESS" == "1" ]; then
         echo "Force reprocessing $FILE_ID: doing fresh transcription..."
-        python3 /app/process_audio.py "$AUDIO_FILE" --force
+        WHISPER_BACKEND="$BACKEND" python3 /app/process_audio.py "$AUDIO_FILE" --force
         TRANSCRIBE_EXIT_CODE=$?
     elif [ -f "$TXT_FILE" ] && [ -f "$SRT_FILE" ]; then
         echo "Transcription files already exist for $FILE_ID, skipping transcription."
     else
         echo "transcribing $FILE_ID..."
-        python3 /app/process_audio.py "$AUDIO_FILE"
+        WHISPER_BACKEND="$BACKEND" python3 /app/process_audio.py "$AUDIO_FILE"
         TRANSCRIBE_EXIT_CODE=$?
     fi
 
     if [ $TRANSCRIBE_EXIT_CODE -ne 0 ]; then
         echo "Transcription failed for $FILE_ID, skipping merging/summarizing."
         $REDIS_CLI DEL "$LOCK_KEY"
-        continue
+        return
     fi
 
 
     # Checking size of the TXT file
     if [ -f "$TXT_FILE" ]; then
         size_bytes=$(stat -c%s "$TXT_FILE") #  get size in bytes
-        size_kb=$(awk "BEGIN { printf \"%.2f\", $size_bytes/1024 }") #convert to kilobytes (decimal KB)       
+        size_kb=$(awk "BEGIN { printf \"%.2f\", $size_bytes/1024 }") #convert to kilobytes (decimal KB)
         size_mb=$(awk "BEGIN { printf \"%.2f\", $size_bytes/1024/1024 }")  # convert to megabytes (decimal MB)
         echo "Transcript size for $FILE_ID: ${size_mb} MB (${size_kb} KB)"
     fi
-    
+
    # Step 2: Merge Speakers
     MERGE_EXIT_CODE=0
     if [ "$FORCE_PROCESS" == "1" ]; then
@@ -133,5 +132,23 @@ while true; do
     # Release the lock
     $REDIS_CLI DEL "$LOCK_KEY"
     $REDIS_CLI DEL "force_process:${FILE_ID}"
-    
-done
+}
+
+worker_loop() {
+    local backend="$1"
+    while true; do
+        if [ "$backend" = "azure" ]; then
+            local low_len=$($REDIS_CLI LLEN "$QUEUE_LOW")
+            if [ "$low_len" -le 20 ]; then
+                sleep 10
+                continue
+            fi
+        fi
+        process_once "$backend"
+    done
+}
+
+worker_loop open_source &
+worker_loop azure &
+
+wait -n
