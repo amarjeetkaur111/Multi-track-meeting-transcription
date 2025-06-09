@@ -78,7 +78,7 @@ def process_audio():
             if file_exists(txt_file_path) and file_exists(summary_file_path):
                 webhook_data = {
                     "file_id": file_id,
-                    "script":  Path(os.getenv("BBB_URL")) /f"{file_id}.txt",
+                    "script":  str(Path(os.getenv("BBB_URL")) / f"{file_id}.txt"),
                     "status": "done"
                 }
                 async_send_webhook(webhook_data)

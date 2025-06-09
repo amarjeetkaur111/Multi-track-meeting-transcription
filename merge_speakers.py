@@ -17,7 +17,7 @@ import re
 import sys
 import shutil
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Callable
 
 # ---------------------------------------------------------------------------
 # Tunables – adjust for your environment / tolerance
@@ -42,6 +42,55 @@ def parse_time_str_to_millis(time_str: str) -> int:
     hh, mm, ssms = time_str.split(":")
     ss, ms = ssms.split(".")
     return ((int(hh) * 3600) + (int(mm) * 60) + int(ss)) * 1000 + int(ms)
+
+# ---------------------------------------------------------------------------
+# Helper: ms → HH:MM:SS.mmm  (for chat timeline)
+# ---------------------------------------------------------------------------
+def ms_to_hhmmss(ms: int) -> str:
+    hh, rem = divmod(ms, 3_600_000)
+    mm, rem = divmod(rem,   60_000)
+    ss, ms  = divmod(rem,    1_000)
+    return f"{hh:02d}:{mm:02d}:{ss:02d}.{ms:03d}"
+
+# ---------------------------------------------------------------------------
+# Helper: build converter abs-timestamp ➜ recording-timeline ms
+# ---------------------------------------------------------------------------
+def build_rec_clock(events: List[ET.Element]) -> Callable[[int], int | None]:
+    """
+    Return a function convert(ts_abs) -> rec_ms | None
+    that maps absolute BBB timestamps to the “viewer” timeline.
+    """
+    segments: List[Tuple[int, int, int]] = []  # (abs_start, abs_end, rec_start_ms)
+    rec_on = False
+    abs_start = None
+    rec_ms_accum = 0
+
+    for ev in events:
+        ev_name = ev.get("eventname")
+        ts_abs  = int(ev.get("timestamp", "0"))
+
+        if ev_name == "RecordStatusEvent":
+            status = (ev.findtext("status") or "").lower()
+            if status == "true" and not rec_on:
+                rec_on = True
+                abs_start = ts_abs
+            elif status != "true" and rec_on:
+                segments.append((abs_start, ts_abs, rec_ms_accum))
+                rec_ms_accum += ts_abs - abs_start
+                rec_on = False
+                abs_start = None
+
+    # meeting ended with recording still on
+    if rec_on and abs_start is not None:
+        segments.append((abs_start, 2**63 - 1, rec_ms_accum))
+
+    def convert(ts_abs: int) -> int | None:
+        for seg_abs_start, seg_abs_end, seg_rec_start in segments:
+            if seg_abs_start <= ts_abs < seg_abs_end:
+                return seg_rec_start + (ts_abs - seg_abs_start)
+        return None  # occurred while recording paused
+
+    return convert
 
 # ---------------------------------------------------------------------------
 # 1. Extract talking intervals from events.xml
@@ -254,14 +303,14 @@ def merge_speakers_with_transcript(transcript_file: str,
     logging.info("Speaker-labeled transcript written to %s", output_file)
 
 # ---------------------------------------------------------------------------
-# NEW: 3. Extract chat messages from events.xml → <chat_output.txt>
+# 3. Extract chat messages with recording-timeline timestamps
 # ---------------------------------------------------------------------------
 def extract_chat_events(xml_path: str,
                         user_map: Dict[str, str],
                         chat_out_path: str) -> None:
     """
-    Scan for all <event eventname="PublicChatEvent"> entries and write lines like:
-      [2025-04-24T18:56:36.798Z][Alice]: Hello everyone!
+    Write chat lines using the same recording timeline as captions:
+      [HH:MM:SS.mmm][Alice]: Hello …
     """
     if not os.path.exists(xml_path):
         logging.error("events.xml not found: %s", xml_path)
@@ -269,18 +318,26 @@ def extract_chat_events(xml_path: str,
 
     root = ET.parse(xml_path).getroot()
     events = root.findall("event")
+    events.sort(key=lambda e: int(e.get("timestamp", "0")))
+
+    rec_clock = build_rec_clock(events)  # build once
     chat_lines: List[str] = []
 
     for ev in events:
-        if ev.get("eventname") == "PublicChatEvent":
-            # prefer the human‐readable <date>, fallback to the raw attribute
-            timestamp = ev.findtext("date") or ev.get("timestamp", "")
-            sid = ev.findtext("senderId") or ""
-            name = user_map.get(sid, sid or "Unknown")
-            msg = ev.findtext("message") or ""
-            chat_lines.append(f"[{timestamp}][{name}]: {msg}")
+        if ev.get("eventname") != "PublicChatEvent":
+            continue
 
-    # write them out in chronological order
+        ts_abs = int(ev.get("timestamp", "0"))
+        rec_ms = rec_clock(ts_abs)
+        if rec_ms is None:  # happened while recording paused
+            continue
+
+        sender_id = ev.findtext("senderId") or ""
+        name      = user_map.get(sender_id, sender_id or "Unknown")
+        message   = ev.findtext("message") or ""
+
+        chat_lines.append(f"[{ms_to_hhmmss(rec_ms)}][{name}]: {message}")
+
     with open(chat_out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(chat_lines))
     logging.info("Chat events written to %s", chat_out_path)

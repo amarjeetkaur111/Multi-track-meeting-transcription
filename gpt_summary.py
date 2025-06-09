@@ -1,12 +1,63 @@
 #!/usr/bin/env python3
-import os
-import sys
-# from dotenv import load_dotenv
-from openai import AzureOpenAI
-from dotenv import load_dotenv
-from pathlib import Path
-load_dotenv() 
+"""Generate a language-aware, fully structured meeting summary with absolute dates.
 
+Fixes / improvements
+--------------------
+* **Timezone-aware date** – Replace deprecated ``datetime.utcfromtimestamp`` with
+  ``datetime.fromtimestamp(ts, datetime.timezone.utc)`` to silence Pylance and
+  keep the datetime explicitly in UTC.
+* **Rightmost epoch** – We continue to take the last 13- or 10-digit epoch in
+  ``file_id`` so mixed IDs resolve correctly.
+* **Debug flag** – ``DEBUG_DATE=1`` prints the extracted date for verification.
+"""
+
+
+from __future__ import annotations
+
+import datetime as dt
+import os
+import re
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+from openai import AzureOpenAI
+
+load_dotenv()  # Load .env as early as possible
+
+_EPOCH_13 = re.compile(r"\d{13}")  # milliseconds
+_EPOCH_10 = re.compile(r"\d{10}")  # seconds (fallback)
+
+
+def _extract_meeting_date(file_id: str) -> dt.datetime | None:
+    """Return UTC datetime (tz‑aware) from last epoch in *file_id*."""
+    ms = _EPOCH_13.findall(file_id)
+    sec = _EPOCH_10.findall(file_id)
+    ts_str = ms[-1] if ms else sec[-1] if sec else None
+    if not ts_str:
+        return None
+    ts = int(ts_str)
+    if len(ts_str) == 13:
+        ts //= 1000
+    try:
+        return dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
+    except (OSError, ValueError):
+        return None
+
+
+def _fmt_iso(d: dt.datetime | None) -> str:
+    return d.astimezone(dt.timezone.utc).strftime("%Y-%m-%d") if d else "UNKNOWN-DATE"
+
+
+def _fmt_human(d: dt.datetime | None) -> str:
+    if not d:
+        return "UNKNOWN-DATE"
+    return f"{d.strftime('%B')} {d.day}, {d.year}"  # e.g. June 3, 2025
+
+
+# ---------------------------------------------------------------------------
+# Main logic
+# ---------------------------------------------------------------------------
 def main():
     from webhook_utils import async_send_webhook  # <-- import here
 
@@ -15,6 +66,14 @@ def main():
         sys.exit(1)
 
     file_id = sys.argv[1]
+    meeting_dt = _extract_meeting_date(file_id)
+    meeting_date_iso = _fmt_iso(meeting_dt)
+    meeting_date_human = _fmt_human(meeting_dt)
+
+    if os.getenv("DEBUG_DATE"):
+        print(f"[DEBUG] file_id='{file_id}' → iso={meeting_date_iso} human='{meeting_date_human}'")
+    
+    base_dir = Path(os.getenv("TRANSCRIPTS_FOLDER", "."))
     speaker_path    = Path(os.getenv("TRANSCRIPTS_FOLDER")) /f"{file_id}_speakers.txt"
     default_path    = Path(os.getenv("TRANSCRIPTS_FOLDER")) /f"{file_id}.txt"
     transcript_path = speaker_path if os.path.isfile(speaker_path) else default_path
@@ -36,25 +95,29 @@ def main():
     )
     deployment_name = os.getenv("AZURE_CHAT_DEPLOYMENT")
 
-    # 3. Read transcript
-    with open(transcript_path, "r", encoding="utf-8") as f:
-        transcript = f.read()
-
+    # ------------------------------------------------------------------
+    # Load transcript / chat
+    # ------------------------------------------------------------------
+    transcript = transcript_path.read_text(encoding="utf-8")
+    chat = chat_path.read_text(encoding="utf-8") if chat_path.is_file() else ""
 
     # print(f"--- Transcript ({transcript_path}) ---\n{transcript}\n--- End transcript ---")
-
-    # 4. Read chat if it exists
-    chat = ""
-    if os.path.isfile(chat_path):
-        with open(chat_path, "r", encoding="utf-8") as f:
-            chat = f.read()
 
     # print(f"--- Chat log ({chat_path}) ---\n{chat or '[empty]'}\n--- End chat log ---\n")
 
 
     # 5. Build messages
     system_prompt = """You are an Expert Universal Meeting Summarizer.  
-        1. **Detect** the primary language of the transcript which is the mostly spoken language during the transcript. And write the detected language name at the start 
+        The meeting took place on **{meeting_date_human}** (original ISO: {meeting_date_iso}). When the transcript or chat includes
+        relative expressions such as “next week”, “last Monday”, “previous quarter”, or similar, **append the
+        exact calendar date** in parentheses, calculated relative to this meeting date. Use ISO format
+        `YYYY‑MM‑DD`. Keep the original wording intact, e.g.:
+
+        * “We will deliver the draft **next week (2025-06-11)**.”
+
+        Follow these rules in addition to the existing instructions below.
+
+        1. **Detect** the primary language of the transcript which is the mostly spoken language during the transcript. And write the detected language name and the meeting date **{meeting_date_human}**  at the start 
         2. **Translate** every static label—section titles, headings, bullet-labels—into that language.  
         3. Produce **all** output (headings + content) in the primary language.
         4. if the transcript is primarily in English then summary should be in English and should not include any text from other languages rather than the primary language, The summary should remain consistent with the primary language throughout.
@@ -77,22 +140,19 @@ def main():
         - **[Translate Upcoming Events & Deadlines]**: Exams, meetings, celebrations, holidays. Explicit due dates or calendar cues
         - **[Translate Special Occasions] such as holidays, days off.
 
-        3. **[Translate Chat Highlights]**  
-        – If the chat log is empty, write “[Translate No chat to summarize].” else Summarize the side-conversations, questions, and action items from the chat log
+        #4. [Translate “Chat Highlights”] – If no chat, write “No chat to summarize” else summarize the side-conversations, questions, and action items from the chat log
 
-        **[Translate Formatting Rules:]**  
-        - Use clear Markdown headings.  
-        - Strip out “um,” “uh,” and filler.  
-        - Preserve exact wording for quotes only.  
-        - If a section has no entries, write “[Translate None mentioned].”
+        **Formatting**: Markdown headings, omit filler, preserve exact wording for quotes, write “None mentioned” for empty sections. Beautify with icons and emojis.
         """
 
-    user_content = f"Here is the transcript:\n\n{transcript}\n\n"
-    if chat:
-        user_content += f"Here is the chat log:\n\n{chat}\n\n"
-    else:
-        user_content += "No chat log was provided for this meeting.\n\n"
-    user_content += "Please provide the detailed summary as specified."
+    user_content = "\n".join(
+        [
+            f"This meeting occurred on {meeting_date_human}.",
+            "\nHere is the transcript:\n\n" + transcript,
+            ("Here is the chat log:\n\n" + chat) if chat else "No chat log was provided for this meeting.",
+            "\n\nPlease provide the detailed summary as specified.",
+        ]
+    )
 
     messages = [
         {"role": "system", "content": system_prompt},
