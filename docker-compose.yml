@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: whisper-priority-image
-    container_name: whisper-priority-container
+    container_name: whisper-python-worker
     runtime: nvidia
     deploy:
       resources:
@@ -34,13 +34,3 @@ services:
     restart: always
     command: sh -c "rm -rf /app/*.log && supervisord -c /etc/supervisor/conf.d/supervisord.conf -n"
 
-  redis:
-    image: redis:latest
-    container_name: redis_server
-    restart: always
-    ports:
-      - "6379:6379"
-    volumes:
-      - ./redis_data:/data
-      - ./redis.conf:/usr/local/etc/redis/redis.conf # 👈 Mount the custom config
-    command: redis-server /usr/local/etc/redis/redis.conf # 👈 Use the custom config

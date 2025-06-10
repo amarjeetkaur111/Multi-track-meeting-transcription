@@ -3,7 +3,7 @@
 CHECK_INTERVAL=30  # Seconds between checks
 MAX_RETRIES=3      # Max consecutive failures before restart
 FAILURE_COUNT=0    # Track consecutive failures
-CONTAINER_NAME="whisper-priority-container"  # Must match your container name
+CONTAINER_NAME="whisper-python-worker"  # Must match your container name
 LOG_FILE="/app/gpu_watchdog.log"
 
 # Ensure log file exists
