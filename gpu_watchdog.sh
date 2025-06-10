@@ -35,8 +35,9 @@ while true; do
 
         # Restart container if max retries reached
         if [ "$FAILURE_COUNT" -ge "$MAX_RETRIES" ]; then
-            log_message "[$(date '+%Y-%m-%d %H:%M:%S')] [GPU Watchdog] Max retries reached. Restarting container by killing PID 1..." | tee -a /app/gpu_watchdog.log
-            kill 1
+            log_message "Max retries reached. Restarting container '$CONTAINER_NAME'..."
+            docker restart "$CONTAINER_NAME"
+            FAILURE_COUNT=0
         fi
     fi
 

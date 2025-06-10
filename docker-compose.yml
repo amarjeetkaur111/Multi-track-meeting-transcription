@@ -21,7 +21,7 @@ services:
       - /raw:/raw
       - .:/app
       - /var/run/docker.sock:/var/run/docker.sock # Mount Docker socket
-      - ./supervisord.conf:/etc/supervisor/supervisord.conf
+      - ./supervisord.conf:/etc/supervisor/conf.d/supervisord.conf
       - type: bind
         source: ./supervisor-logs
         target: /app/logs
