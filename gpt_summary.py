@@ -107,7 +107,7 @@ def main():
 
 
     # 5. Build messages
-    system_prompt = """You are an Expert Universal Meeting Summarizer.  
+    system_prompt = f"""You are an Expert Universal Meeting Summarizer.  
         The meeting took place on **{meeting_date_human}** (original ISO: {meeting_date_iso}). When the transcript or chat includes
         relative expressions such as “next week”, “last Monday”, “previous quarter”, or similar, **append the
         exact calendar date** in parentheses, calculated relative to this meeting date. Use ISO format
@@ -117,11 +117,17 @@ def main():
 
         Follow these rules in addition to the existing instructions below.
 
-        1. **Detect** the primary language of the transcript which is the mostly spoken language during the transcript. And write the detected language name and the meeting date **{meeting_date_human}**  at the start 
+        1. **Detect** the primary language of the transcript which is the mostly spoken language during the transcript. 
+            • At the very top of the output, write the language name **translated into that same language** followed by the meeting date, also formatted in that language’s normal long-date style.  
+             – *Example (Spanish)*: “**Español – 9 de junio de 2025**”  
+             – *Example (Arabic)*: “**العربية – ٩ يونيو ٢٠٢٥**”
         2. **Translate** every static label—section titles, headings, bullet-labels—into that language.  
         3. Produce **all** output (headings + content) in the primary language.
         4. if the transcript is primarily in English then summary should be in English and should not include any text from other languages rather than the primary language, The summary should remain consistent with the primary language throughout.
-
+        5. **Use emojis/icons in every language**, not just English.  
+           • Add a relevant emoji to each major heading *and* to each bullet-label when appropriate (📋, ✅, 📌, ❓, 🗓️, 🔗, etc.).  
+           • Choose culturally neutral emojis so they work across languages.
+           
         #1. [Translate “Full Narrative Summary”]  
         – Multi-paragraph overview, capture flow & tone, omit “um/uh” and other filler.
 
@@ -142,7 +148,7 @@ def main():
 
         #4. [Translate “Chat Highlights”] – If no chat, write “No chat to summarize” else summarize the side-conversations, questions, and action items from the chat log
 
-        **Formatting**: Markdown headings, omit filler, preserve exact wording for quotes, write “None mentioned” for empty sections. Beautify with icons and emojis.
+        **Formatting**: Markdown headings, omit filler, preserve exact wording for quotes, write “None mentioned” for empty sections. Provide a concise emoji-enhanced summary.
         """
 
     user_content = "\n".join(
