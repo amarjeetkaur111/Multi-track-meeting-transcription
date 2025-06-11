@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+import json
 from pathlib import Path
 
 import redis
@@ -10,6 +11,7 @@ STREAM_HIGH = "whisper:jobs:high"
 STREAM_LOW = "whisper:jobs:low"
 STREAM_DONE = "whisper:done"
 STREAM_FAILED = "whisper:failed"
+STREAM_FILES = "whisper:file"
 LOCK_PREFIX = "lock:"
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
@@ -32,6 +34,31 @@ for stream in (STREAM_HIGH, STREAM_LOW):
 def run(cmd):
     return subprocess.run(cmd, check=False, env=os.environ).returncode
 
+def notify_file(file_id: str, file_type: str, status: str, error: str | None = None) -> None:
+    """Publish file processing status via Redis."""
+    data = {
+        "file_id": file_id,
+        "type": file_type,
+        "status": status,
+    }
+    base_url = os.getenv("BBB_URL")
+    if status == "done" and base_url:
+        base_url = base_url.rstrip("/")
+        suffix = {
+            "srt": f"{file_id}.srt",
+            "txt": f"{file_id}.txt",
+            "summary": f"{file_id}_summary.txt",
+            "speakers": f"{file_id}_speakers.txt",
+            "chat": f"{file_id}_chat.txt",
+        }.get(file_type)
+        if suffix:
+            data["script"] = f"{base_url}/{suffix}"
+    if error:
+        data["error"] = error
+    # Redis streams require string values
+    r.xadd(STREAM_FILES, {k: str(v) for k, v in data.items()})
+    r.publish(STREAM_FILES, json.dumps(data))
+
 def process(file_id, stream, msg_id):
     lock_key = f"{LOCK_PREFIX}{file_id}"
     if not r.set(lock_key, "1", nx=True, ex=600):
@@ -43,6 +70,7 @@ def process(file_id, stream, msg_id):
     audio = f"/app/queue/{file_id}.ogg"
     txt = f"/transcripts/scripts/{file_id}.txt"
     speakers = f"/transcripts/scripts/{file_id}_speakers.txt"
+    chat = f"/transcripts/scripts/{file_id}_chat.txt"
 
     try:
         if not Path(audio).is_file():
@@ -62,7 +90,11 @@ def process(file_id, stream, msg_id):
         if force:
             cmd.append("--force")
         if run(cmd):
+            notify_file(file_id, "srt", "error", "transcribe failed")
+            notify_file(file_id, "txt", "error", "transcribe failed")
             raise RuntimeError("transcribe failed")
+        notify_file(file_id, "srt", "done")
+        notify_file(file_id, "txt", "done")
 
         merge_cmd = [
             "python3",
@@ -73,10 +105,17 @@ def process(file_id, stream, msg_id):
             f"/transcripts/scripts/{file_id}_chat.txt",
         ]
         if run(merge_cmd):
+            notify_file(file_id, "speakers", "error", "merge failed")
+            notify_file(file_id, "chat", "error", "merge failed")
             raise RuntimeError("merge failed")
+        notify_file(file_id, "speakers", "done")
+        if Path(chat).is_file():
+            notify_file(file_id, "chat", "done")
 
         if run(["python3", "/app/gpt_summary.py", file_id]):
+            notify_file(file_id, "summary", "error", "summary failed")
             raise RuntimeError("summary failed")
+        notify_file(file_id, "summary", "done")
 
         r.xack(stream, GROUP, msg_id)
         r.xadd(STREAM_DONE, {"file_id": file_id})
