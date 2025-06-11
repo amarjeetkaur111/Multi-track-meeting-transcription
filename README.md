@@ -13,6 +13,7 @@ This repository provides Docker configuration and scripts for running a Whisper 
    docker-compose up --build
    ```
    The worker listens for jobs on Redis Streams and no longer exposes an HTTP API.
+    It also publishes job results to Redis Pub/Sub channels `whisper:done` and `whisper:failed` for real-time notifications.
 
 ## Logs
 Application logs are written to `./supervisor-logs`.

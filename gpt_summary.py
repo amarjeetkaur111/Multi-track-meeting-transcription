@@ -59,7 +59,6 @@ def _fmt_human(d: dt.datetime | None) -> str:
 # Main logic
 # ---------------------------------------------------------------------------
 def main():
-    from webhook_utils import async_send_webhook  # <-- import here
 
     if len(sys.argv) != 2:
         print("Usage: gpt_summary.py <FILE_ID>", file=sys.stderr)
@@ -179,16 +178,6 @@ def main():
         f.write(summary)
 
     print(f"✔ Summary written to {summary_path}")
-    # Send Webhook Notification to Laravel
-    print(f"Sending Webhook for Summary: {summary_path}")
-    bbbUrl = os.getenv("BBB_URL")
-    webhook_data = {
-        "file_id": file_id,
-        "script":  f"{bbbUrl.rstrip('/')}/{file_id}.txt",
-        "status": "done",   
-        "type": "summary"
-    }
-    async_send_webhook(webhook_data)
 
     sys.exit(0)
 

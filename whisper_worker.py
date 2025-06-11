@@ -37,6 +37,7 @@ def process(file_id, stream, msg_id):
     if not r.set(lock_key, "1", nx=True, ex=600):
         r.xack(stream, GROUP, msg_id)
         r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "locked"})
+        r.publish(STREAM_FAILED, file_id)
         return
 
     audio = f"/app/queue/{file_id}.ogg"
@@ -47,6 +48,7 @@ def process(file_id, stream, msg_id):
         if not Path(audio).is_file():
             r.xack(stream, GROUP, msg_id)
             r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "missing_audio"})
+            r.publish(STREAM_FAILED, file_id)
             return
 
         if run(["/app/split_audio.sh", audio]):
@@ -78,9 +80,11 @@ def process(file_id, stream, msg_id):
 
         r.xack(stream, GROUP, msg_id)
         r.xadd(STREAM_DONE, {"file_id": file_id})
+        r.publish(STREAM_DONE, file_id)
     except Exception as e:
         r.xack(stream, GROUP, msg_id)
         r.xadd(STREAM_FAILED, {"file_id": file_id, "error": str(e)})
+        r.publish(STREAM_FAILED, file_id)
     finally:
         r.delete(lock_key)
         r.delete(f"force_process:{file_id}")

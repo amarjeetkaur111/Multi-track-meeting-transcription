@@ -7,8 +7,6 @@ import shutil
 import re
 import requests
 import torch
-
-from webhook_utils import async_send_webhook  # <-- import here
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -161,17 +159,6 @@ if os.path.exists(queue_file):
 
 print(f"Final transcript saved to {output_srt}")
 print(f"Converted text file saved to {output_txt}")
-print(f"Sending Webhook for transcript: {base_name}")
-
-# Send Webhook Notification to Laravel
-bbbUrl = os.getenv("BBB_URL")
-webhook_data = {
-    "file_id": base_name,
-    "script": f"{bbbUrl.rstrip('/')}/{base_name}.txt",
-    "status": "done",
-    "type": "transcript"
-}
-async_send_webhook(webhook_data)
 
 # Step 8: Remove chunk directory after processing
 if os.path.exists(chunk_dir):

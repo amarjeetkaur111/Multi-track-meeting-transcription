@@ -8,7 +8,6 @@ from pathlib import Path
 
 load_dotenv() 
 
-from webhook_utils import async_send_webhook  # <-- import here
 
 app = Flask(__name__)
 
