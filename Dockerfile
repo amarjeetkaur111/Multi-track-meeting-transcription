@@ -48,6 +48,3 @@ RUN mkdir -p /app/queue /app/scripts
 COPY ./supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf", "-n"]
 
-# Expose Flask API port
-EXPOSE 5000
-

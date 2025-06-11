@@ -12,12 +12,11 @@ This repository provides Docker configuration and scripts for running a Whisper 
    ```bash
    docker-compose up --build
    ```
-   Whisper will be available on port `5000`.
+   The worker listens for jobs on Redis Streams and no longer exposes an HTTP API.
 
 ## Logs
-Application and watchdog logs are written to `./supervisor-logs` inside the repository.
-- `app.log` – Flask application output
-- `whisper.log` – transcription queue
+Application logs are written to `./supervisor-logs`.
+- `whisper_open.log` / `whisper_azure.log` – worker output
 - `gpu_watchdog.log` – GPU availability monitoring
 
 ## GPU Watchdog
