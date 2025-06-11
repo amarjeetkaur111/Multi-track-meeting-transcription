@@ -9,9 +9,9 @@ import redis
 GROUP = "whisper-workers"
 STREAM_HIGH = "whisper:jobs:high"
 STREAM_LOW = "whisper:jobs:low"
-STREAM_DONE = "whisper:done"
 STREAM_FAILED = "whisper:failed"
 STREAM_FILES = "whisper:file"
+FILE_TYPES = ["srt", "txt", "summary", "chat", "speakers"]
 LOCK_PREFIX = "lock:"
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
@@ -61,10 +61,17 @@ def notify_file(file_id: str, file_type: str, status: str, error: str | None = N
 
 def process(file_id, stream, msg_id):
     lock_key = f"{LOCK_PREFIX}{file_id}"
+    processed: set[str] = set()
+
+    def mark(ft: str, status: str, msg: str | None = None) -> None:
+        notify_file(file_id, ft, status, msg)
+        processed.add(ft)
+
     if not r.set(lock_key, "1", nx=True, ex=600):
         r.xack(stream, GROUP, msg_id)
         r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "locked"})
-        r.publish(STREAM_FAILED, file_id)
+        for ft in FILE_TYPES:
+            mark(ft, "error", "locked")
         return
 
     audio = f"/app/queue/{file_id}.ogg"
@@ -76,7 +83,8 @@ def process(file_id, stream, msg_id):
         if not Path(audio).is_file():
             r.xack(stream, GROUP, msg_id)
             r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "missing_audio"})
-            r.publish(STREAM_FAILED, file_id)
+            for ft in FILE_TYPES:
+                mark(ft, "error", "missing_audio")
             return
 
         if run(["/app/split_audio.sh", audio]):
@@ -90,11 +98,11 @@ def process(file_id, stream, msg_id):
         if force:
             cmd.append("--force")
         if run(cmd):
-            notify_file(file_id, "srt", "error", "transcribe failed")
-            notify_file(file_id, "txt", "error", "transcribe failed")
+            mark("srt", "error", "transcribe failed")
+            mark("txt", "error", "transcribe failed")
             raise RuntimeError("transcribe failed")
-        notify_file(file_id, "srt", "done")
-        notify_file(file_id, "txt", "done")
+        mark("srt", "done")
+        mark("txt", "done")
 
         merge_cmd = [
             "python3",
@@ -105,25 +113,25 @@ def process(file_id, stream, msg_id):
             f"/transcripts/scripts/{file_id}_chat.txt",
         ]
         if run(merge_cmd):
-            notify_file(file_id, "speakers", "error", "merge failed")
-            notify_file(file_id, "chat", "error", "merge failed")
+            mark("speakers", "error", "merge failed")
+            mark("chat", "error", "merge failed")
             raise RuntimeError("merge failed")
-        notify_file(file_id, "speakers", "done")
+        mark("speakers", "done")
         if Path(chat).is_file():
-            notify_file(file_id, "chat", "done")
+            mark("chat", "done")
 
         if run(["python3", "/app/gpt_summary.py", file_id]):
-            notify_file(file_id, "summary", "error", "summary failed")
+            mark("summary", "error", "summary failed")
             raise RuntimeError("summary failed")
-        notify_file(file_id, "summary", "done")
+        mark("summary", "done")
 
         r.xack(stream, GROUP, msg_id)
-        r.xadd(STREAM_DONE, {"file_id": file_id})
-        r.publish(STREAM_DONE, file_id)
     except Exception as e:
         r.xack(stream, GROUP, msg_id)
         r.xadd(STREAM_FAILED, {"file_id": file_id, "error": str(e)})
-        r.publish(STREAM_FAILED, file_id)
+        for ft in FILE_TYPES:
+            if ft not in processed:
+                mark(ft, "error", str(e))
     finally:
         r.delete(lock_key)
         r.delete(f"force_process:{file_id}")
