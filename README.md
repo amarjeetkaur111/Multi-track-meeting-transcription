@@ -17,7 +17,6 @@ This repository provides Docker configuration and scripts for running a Whisper 
 ## Logs
 Application and watchdog logs are written to `./supervisor-logs` inside the repository.
 - `app.log` – Flask application output
-- `split.log` – audio splitting queue
 - `whisper.log` – transcription queue
 - `gpu_watchdog.log` – GPU availability monitoring
 

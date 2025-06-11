@@ -45,7 +45,7 @@ def process_audio():
        a) If it's in a low queue and we want low priority => return "already queued in X".
        b) If it's in a low queue and we want high priority => move it to the corresponding high queue.
        c) If it's in a high queue already => return "already queued in X".
-    6. If not in any queue, download and add to either split_high/split_low.
+    6. If not in any queue, download and add to either whisper_high/whisper_low.
     """
     try:
         data = request.json
@@ -98,58 +98,28 @@ def process_audio():
             if not download_file(full_url, file_path):
                 return jsonify({"status": "error", "error": "Failed to download audio file"}), 500
 
-        # Check if file is in ANY Redis queue
-        # We'll handle each scenario based on the requested logic.
-        all_queues = ["split_high", "split_low", "whisper_high", "whisper_low"]
+        # Check if file is already queued for processing
+        all_queues = ["whisper_high", "whisper_low"]
         for q in all_queues:
             queue_items = redis_client.lrange(q, 0, -1)
             if file_id in queue_items:
                 # If the file is already in a queue:
-                if priority == "low":
-                    # Condition 3: If file is already in split_low or whisper_low and new priority is low
-                    # => "File already queued in <queue>"
-                    # Or if it's in a high queue, we also inform that it's already in a queue.
-                    return jsonify({"status": "in_process", 
-                                    "message": f"File already queued in {q}"}), 200
+                if priority == "high" and q == "whisper_low":
+                    redis_client.lrem("whisper_low", 0, file_id)
+                    redis_client.lpush("whisper_high", file_id)
+                    return jsonify({"status": "requeued",
+                                    "message": "File queue changed from whisper_low to whisper_high"}), 200
                 else:
-                    # priority == "high"
-                    # Condition 4: If file is in split_low but new priority is high
-                    # => move from split_low to split_high
-                    if q == "split_low":
-                        redis_client.lrem("split_low", 0, file_id)
-                        redis_client.lpush("split_high", file_id)
-                        return jsonify({"status": "requeued",
-                                        "message": "File queue changed from split_low to split_high"}), 200
+                    return jsonify({"status": "in_process",
+                                    "message": f"File already queued in {q}"}), 200
 
-                    # Condition 5: If file is in whisper_low but new priority is high and not locked
-                    # => move from whisper_low to whisper_high
-                    elif q == "whisper_low":
-                        redis_client.lrem("whisper_low", 0, file_id)
-                        redis_client.lpush("whisper_high", file_id)
-                        return jsonify({"status": "requeued",
-                                        "message": "File queue changed from whisper_low to whisper_high"}), 200
-
-                    else:
-                        # If it's already in a high queue (split_high or whisper_high),
-                        # we just return that it's already queued.
-                        return jsonify({"status": "in_process",
-                                        "message": f"File already queued in {q}"}), 200
-
-        # 5) Push to the correct queue based on priority
-        if not file_exists(txt_file_path) or retry_all:
-            if priority == "high":
-                redis_client.lpush("split_high", file_id)
-                return jsonify({"status": "processing", "message": "File queued in split_high"}), 200
-            else:
-                redis_client.lpush("split_low", file_id)
-                return jsonify({"status": "processing", "message": "File queued in split_low"}), 200
+        # Push to the correct whisper queue based on priority
+        if priority == "high":
+            redis_client.lpush("whisper_high", file_id)
+            return jsonify({"status": "processing", "message": "File queued in whisper_high"}), 200
         else:
-            if priority == "high":
-                redis_client.lpush("whisper_high", file_id)
-                return jsonify({"status": "processing", "message": "File queued in whisper_high"}), 200
-            else:
-                redis_client.lpush("whisper_low", file_id)
-                return jsonify({"status": "processing", "message": "File queued in whisper_low"}), 200
+            redis_client.lpush("whisper_low", file_id)
+            return jsonify({"status": "processing", "message": "File queued in whisper_low"}), 200
     
     
     except Exception as e:

@@ -55,6 +55,14 @@ process_once() {
         return
     fi
 
+    # Split audio before processing
+    /app/split_audio.sh "$AUDIO_FILE"
+    if [ $? -ne 0 ]; then
+        echo "Splitting failed for $FILE_ID. Removing lock."
+        $REDIS_CLI DEL "$LOCK_KEY"
+        return
+    fi
+
     FORCE_PROCESS=$($REDIS_CLI GET "force_process:${FILE_ID}")
 
    # Step 1: Transcription
