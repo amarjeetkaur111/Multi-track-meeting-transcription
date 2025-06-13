@@ -2,6 +2,8 @@ import os
 import sys
 import subprocess
 import json
+import time
+import threading
 from pathlib import Path
 
 import redis
@@ -61,7 +63,9 @@ def notify_file(file_id: str, file_type: str, status: str, error: str | None = N
 
 def process(file_id, stream, msg_id):
     lock_key = f"{LOCK_PREFIX}{file_id}"
+    index_key = f"whisper:index:{file_id}"
     processed: set[str] = set()
+    state = "error"
 
     def mark(ft: str, status: str, msg: str | None = None) -> None:
         notify_file(file_id, ft, status, msg)
@@ -73,6 +77,19 @@ def process(file_id, stream, msg_id):
         for ft in FILE_TYPES:
             mark(ft, "error", "locked")
         return
+
+    r.hset(index_key, mapping={"state": "processing"})
+
+    stop_extend = threading.Event()
+
+    def extend_lock() -> None:
+        while not stop_extend.wait(300):
+            try:
+                r.pexpire(lock_key, 1200)
+            except Exception:
+                pass
+
+    threading.Thread(target=extend_lock, daemon=True).start()
 
     audio = f"/app/queue/{file_id}.ogg"
     txt = f"/transcripts/scripts/{file_id}.txt"
@@ -124,7 +141,7 @@ def process(file_id, stream, msg_id):
             mark("summary", "error", "summary failed")
             raise RuntimeError("summary failed")
         mark("summary", "done")
-
+        state = "done"
         r.xack(stream, GROUP, msg_id)
     except Exception as e:
         r.xack(stream, GROUP, msg_id)
@@ -133,6 +150,8 @@ def process(file_id, stream, msg_id):
             if ft not in processed:
                 mark(ft, "error", str(e))
     finally:
+        r.hset(index_key, mapping={"state": state})
+        stop_extend.set()
         r.delete(lock_key)
         r.delete(f"force_process:{file_id}")
 
