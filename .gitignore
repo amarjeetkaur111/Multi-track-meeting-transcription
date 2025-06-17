@@ -1,6 +1,6 @@
 whisper.log
 whisper.log.*
-supervisord.log
+supervisord.log/.*
 supervisord.log.*
 app.log
 app.log.*

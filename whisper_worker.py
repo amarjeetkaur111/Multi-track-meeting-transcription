@@ -189,10 +189,15 @@ def next_job():
             if msgs:
                 _, messages = msgs[0]
         if messages:
-            msg_id, data = messages[0]
-            file_id = extract_file_id(data)
-            if file_id:
-                return stream, msg_id, file_id
+            entry = messages[0]
+            if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                msg_id, data = entry
+                file_id = extract_file_id(data)
+                if file_id:
+                    return stream, msg_id, file_id
+            else:
+                # ignore malformed entries
+                continue
     return None
 
 while True:

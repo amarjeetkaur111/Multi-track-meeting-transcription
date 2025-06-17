@@ -1,0 +1,147 @@
+2025-06-17 11:17:46,281 INFO Set uid to user 0 succeeded
+2025-06-17 11:17:46,283 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+2025-06-17 11:17:46,283 INFO supervisord started with pid 28
+2025-06-17 11:17:47,287 INFO spawned: 'gpu-watchdog_00' with pid 29
+2025-06-17 11:17:47,290 INFO spawned: 'whisper-azure_00' with pid 30
+2025-06-17 11:17:47,291 INFO spawned: 'whisper-open_00' with pid 31
+2025-06-17 11:17:47,369 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 11:17:47,370 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 11:17:48,371 INFO success: gpu-watchdog_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-06-17 11:17:48,374 INFO spawned: 'whisper-azure_00' with pid 55
+2025-06-17 11:17:48,377 INFO spawned: 'whisper-open_00' with pid 56
+2025-06-17 11:17:48,446 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 11:17:48,452 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 11:17:50,455 INFO spawned: 'whisper-azure_00' with pid 57
+2025-06-17 11:17:50,456 INFO spawned: 'whisper-open_00' with pid 58
+2025-06-17 11:17:50,531 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 11:17:50,531 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 11:17:53,534 INFO spawned: 'whisper-azure_00' with pid 59
+2025-06-17 11:17:53,535 INFO spawned: 'whisper-open_00' with pid 60
+2025-06-17 11:17:53,610 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 11:17:53,611 INFO gave up: whisper-azure_00 entered FATAL state, too many start retries too quickly
+2025-06-17 11:17:53,611 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 11:17:54,612 INFO gave up: whisper-open_00 entered FATAL state, too many start retries too quickly
+2025-06-17 11:18:10,584 INFO Set uid to user 0 succeeded
+2025-06-17 11:18:10,890 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+2025-06-17 11:18:10,891 INFO supervisord started with pid 28
+2025-06-17 11:18:11,895 INFO spawned: 'gpu-watchdog_00' with pid 29
+2025-06-17 11:18:11,899 INFO spawned: 'whisper-azure_00' with pid 30
+2025-06-17 11:18:11,901 INFO spawned: 'whisper-open_00' with pid 31
+2025-06-17 11:18:11,981 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 11:18:11,981 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 11:18:12,981 INFO success: gpu-watchdog_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-06-17 11:18:12,982 INFO spawned: 'whisper-azure_00' with pid 55
+2025-06-17 11:18:12,983 INFO spawned: 'whisper-open_00' with pid 56
+2025-06-17 11:18:13,054 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 11:18:13,056 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 11:18:15,061 INFO spawned: 'whisper-azure_00' with pid 57
+2025-06-17 11:18:15,066 INFO spawned: 'whisper-open_00' with pid 58
+2025-06-17 11:18:15,144 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 11:18:15,150 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 11:18:18,158 INFO spawned: 'whisper-azure_00' with pid 59
+2025-06-17 11:18:18,161 INFO spawned: 'whisper-open_00' with pid 60
+2025-06-17 11:18:18,231 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 11:18:18,240 INFO gave up: whisper-azure_00 entered FATAL state, too many start retries too quickly
+2025-06-17 11:18:18,240 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 11:18:19,241 INFO gave up: whisper-open_00 entered FATAL state, too many start retries too quickly
+2025-06-17 12:30:49,186 INFO Set uid to user 0 succeeded
+2025-06-17 12:30:49,187 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+2025-06-17 12:30:49,188 INFO supervisord started with pid 28
+2025-06-17 12:30:50,189 INFO spawned: 'gpu-watchdog_00' with pid 29
+2025-06-17 12:30:50,190 INFO spawned: 'whisper-azure_00' with pid 30
+2025-06-17 12:30:50,191 INFO spawned: 'whisper-open_00' with pid 31
+2025-06-17 12:30:50,262 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:30:50,280 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:30:52,151 INFO success: gpu-watchdog_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-06-17 12:30:52,152 INFO spawned: 'whisper-azure_00' with pid 58
+2025-06-17 12:30:52,153 INFO spawned: 'whisper-open_00' with pid 59
+2025-06-17 12:30:52,231 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:30:52,242 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:30:54,245 INFO spawned: 'whisper-azure_00' with pid 60
+2025-06-17 12:30:54,246 INFO spawned: 'whisper-open_00' with pid 61
+2025-06-17 12:30:54,316 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:30:54,319 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:30:57,322 INFO spawned: 'whisper-azure_00' with pid 62
+2025-06-17 12:30:57,323 INFO spawned: 'whisper-open_00' with pid 63
+2025-06-17 12:30:57,393 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:30:57,402 INFO gave up: whisper-azure_00 entered FATAL state, too many start retries too quickly
+2025-06-17 12:30:57,402 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:30:58,403 INFO gave up: whisper-open_00 entered FATAL state, too many start retries too quickly
+2025-06-17 12:33:44,888 INFO Set uid to user 0 succeeded
+2025-06-17 12:33:44,890 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+2025-06-17 12:33:44,890 INFO supervisord started with pid 28
+2025-06-17 12:33:45,892 INFO spawned: 'gpu-watchdog_00' with pid 29
+2025-06-17 12:33:45,893 INFO spawned: 'whisper-azure_00' with pid 30
+2025-06-17 12:33:45,894 INFO spawned: 'whisper-open_00' with pid 31
+2025-06-17 12:33:45,965 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:33:45,965 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:33:46,966 INFO success: gpu-watchdog_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-06-17 12:33:46,967 INFO spawned: 'whisper-azure_00' with pid 55
+2025-06-17 12:33:46,968 INFO spawned: 'whisper-open_00' with pid 56
+2025-06-17 12:33:47,041 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:33:47,051 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:33:49,054 INFO spawned: 'whisper-azure_00' with pid 57
+2025-06-17 12:33:49,055 INFO spawned: 'whisper-open_00' with pid 58
+2025-06-17 12:33:49,126 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:33:49,142 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:33:52,146 INFO spawned: 'whisper-azure_00' with pid 59
+2025-06-17 12:33:52,147 INFO spawned: 'whisper-open_00' with pid 60
+2025-06-17 12:33:52,224 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:33:52,225 INFO gave up: whisper-azure_00 entered FATAL state, too many start retries too quickly
+2025-06-17 12:33:52,225 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:33:53,226 INFO gave up: whisper-open_00 entered FATAL state, too many start retries too quickly
+2025-06-17 12:42:02,461 INFO Set uid to user 0 succeeded
+2025-06-17 12:42:02,463 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+2025-06-17 12:42:02,463 INFO supervisord started with pid 28
+2025-06-17 12:42:03,464 INFO spawned: 'gpu-watchdog_00' with pid 29
+2025-06-17 12:42:03,465 INFO spawned: 'whisper-azure_00' with pid 30
+2025-06-17 12:42:03,465 INFO spawned: 'whisper-open_00' with pid 31
+2025-06-17 12:42:03,553 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:42:03,554 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:42:04,555 INFO success: gpu-watchdog_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-06-17 12:42:04,556 INFO spawned: 'whisper-azure_00' with pid 55
+2025-06-17 12:42:04,557 INFO spawned: 'whisper-open_00' with pid 56
+2025-06-17 12:42:04,630 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:42:04,635 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:42:06,638 INFO spawned: 'whisper-azure_00' with pid 57
+2025-06-17 12:42:06,639 INFO spawned: 'whisper-open_00' with pid 58
+2025-06-17 12:42:06,723 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:42:06,724 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:42:09,728 INFO spawned: 'whisper-azure_00' with pid 59
+2025-06-17 12:42:09,729 INFO spawned: 'whisper-open_00' with pid 60
+2025-06-17 12:42:09,797 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:42:09,797 INFO gave up: whisper-azure_00 entered FATAL state, too many start retries too quickly
+2025-06-17 12:42:09,807 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:42:10,808 INFO gave up: whisper-open_00 entered FATAL state, too many start retries too quickly
+2025-06-17 12:51:54,270 INFO Set uid to user 0 succeeded
+2025-06-17 12:51:54,272 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+2025-06-17 12:51:54,272 INFO supervisord started with pid 28
+2025-06-17 12:51:55,276 INFO spawned: 'gpu-watchdog_00' with pid 29
+2025-06-17 12:51:55,279 INFO spawned: 'whisper-azure_00' with pid 30
+2025-06-17 12:51:55,279 INFO spawned: 'whisper-open_00' with pid 31
+2025-06-17 12:51:55,357 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:51:55,357 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:51:56,358 INFO success: gpu-watchdog_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-06-17 12:51:56,361 INFO spawned: 'whisper-azure_00' with pid 55
+2025-06-17 12:51:56,364 INFO spawned: 'whisper-open_00' with pid 56
+2025-06-17 12:51:56,446 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:51:56,450 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:51:58,453 INFO spawned: 'whisper-azure_00' with pid 57
+2025-06-17 12:51:58,454 INFO spawned: 'whisper-open_00' with pid 58
+2025-06-17 12:51:58,527 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:51:58,533 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:52:01,540 INFO spawned: 'whisper-azure_00' with pid 59
+2025-06-17 12:52:01,542 INFO spawned: 'whisper-open_00' with pid 60
+2025-06-17 12:52:01,611 INFO exited: whisper-azure_00 (exit status 1; not expected)
+2025-06-17 12:52:01,611 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-17 12:52:02,613 INFO gave up: whisper-azure_00 entered FATAL state, too many start retries too quickly
+2025-06-17 12:52:02,613 INFO gave up: whisper-open_00 entered FATAL state, too many start retries too quickly
+2025-06-17 12:59:48,631 INFO Set uid to user 0 succeeded
+2025-06-17 12:59:48,633 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+2025-06-17 12:59:48,633 INFO supervisord started with pid 28
+2025-06-17 12:59:49,637 INFO spawned: 'gpu-watchdog_00' with pid 29
+2025-06-17 12:59:49,640 INFO spawned: 'whisper-azure_00' with pid 30
+2025-06-17 12:59:49,641 INFO spawned: 'whisper-open_00' with pid 31
+2025-06-17 12:59:51,628 INFO success: gpu-watchdog_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-06-17 12:59:51,628 INFO success: whisper-azure_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-06-17 12:59:51,628 INFO success: whisper-open_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)

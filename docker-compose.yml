@@ -1,5 +1,9 @@
 version: '3.9'
 
+networks:
+  whisper-net:               # external = already exists
+    external: true
+
 services:
   whisper:
     build:
@@ -7,6 +11,11 @@ services:
       dockerfile: Dockerfile
     image: whisper-worker-image
     container_name: whisper-python-worker
+    networks:
+      - whisper-net          # ← attach!
+    environment:
+      REDIS_HOST: redis_server   # or just 'redis' if you use that alias
+      REDIS_PORT: 6379
     runtime: nvidia
     deploy:
       resources:
