@@ -19,7 +19,7 @@ LOCK_PREFIX = "lock:"
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
-BACKEND = sys.argv[1] if len(sys.argv) > 1 else os.getenv("WHISPER_BACKEND", "open_source")
+BACKEND = sys.argv[1] if len(sys.argv) > 1 else os.getenv("WHISPER_BACKEND", "local_whisper")
 CONSUMER = os.getenv("CONSUMER_NAME", f"{BACKEND}-{os.getpid()}")
 os.environ["WHISPER_BACKEND"] = BACKEND
 BLOCK_MS = 5000

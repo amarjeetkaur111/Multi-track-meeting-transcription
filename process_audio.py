@@ -12,7 +12,7 @@ from pathlib import Path
 
 load_dotenv() 
 
-WHISPER_BACKEND = os.getenv("WHISPER_BACKEND", "open_source").lower()
+WHISPER_BACKEND = os.getenv("WHISPER_BACKEND", "local_whisper").lower()
 print(f"Env Value: {WHISPER_BACKEND}")  
 
 if WHISPER_BACKEND == "azure":

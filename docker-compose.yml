@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: whisper-priority-image
+    image: whisper-worker-image
     container_name: whisper-python-worker
     runtime: nvidia
     deploy:
