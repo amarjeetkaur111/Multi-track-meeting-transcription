@@ -15,6 +15,7 @@ STREAM_FAILED = "whisper:failed"
 STREAM_FILES = "whisper:file"
 FILE_TYPES = ["srt", "txt", "summary", "chat", "speakers"]
 LOCK_PREFIX = "lock:"
+CLAIM_IDLE_MS = int(os.getenv("CLAIM_IDLE_MS", "900000"))
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -35,6 +36,25 @@ for stream in (STREAM_HIGH, STREAM_LOW):
 
 def run(cmd):
     return subprocess.run(cmd, check=False, env=os.environ).returncode
+
+def extract_file_id(data: dict) -> str | None:
+    """Return the file_id from a job entry.
+
+    Messages may include the file_id directly or wrapped in a JSON
+    string under the ``payload`` field as used by the Laravel producer.
+    """
+
+    fid = data.get("file_id")
+    if fid:
+        return fid
+    payload = data.get("payload")
+    if payload:
+        try:
+            obj = json.loads(payload)
+            return obj.get("file_id")
+        except Exception:
+            return None
+    return None
 
 def notify_file(file_id: str, file_type: str, status: str, error: str | None = None) -> None:
     """Publish file processing status via Redis."""
@@ -157,11 +177,20 @@ def process(file_id, stream, msg_id):
 
 def next_job():
     for stream in (STREAM_HIGH, STREAM_LOW):
-        msgs = r.xreadgroup(GROUP, CONSUMER, {stream: ">"}, count=1, block=BLOCK_MS)
-        if msgs:
-            name, messages = msgs[0]
+        # First try to claim messages left unacknowledged by crashed workers
+        try:
+            res = r.xautoclaim(stream, GROUP, CONSUMER, CLAIM_IDLE_MS, "0-0", count=1)
+            messages = res[1] if isinstance(res, tuple) else res[0]
+        except Exception:
+            messages = []
+        if not messages:
+            messages = []
+            msgs = r.xreadgroup(GROUP, CONSUMER, {stream: ">"}, count=1, block=BLOCK_MS)
+            if msgs:
+                _, messages = msgs[0]
+        if messages:
             msg_id, data = messages[0]
-            file_id = data.get("file_id")
+            file_id = extract_file_id(data)
             if file_id:
                 return stream, msg_id, file_id
     return None
