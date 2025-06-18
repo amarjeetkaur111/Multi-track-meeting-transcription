@@ -6,6 +6,12 @@ import time
 import threading
 from pathlib import Path
 
+
+def log(msg: str) -> None:
+    """Print a timestamped log message to stdout."""
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
+
 import redis
 
 GROUP = "whisper-workers"
@@ -26,13 +32,17 @@ os.environ["WHISPER_BACKEND"] = BACKEND
 BLOCK_MS = 5000
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+log(f"Worker {CONSUMER} connecting to Redis at {REDIS_HOST}:{REDIS_PORT}")
 
 for stream in (STREAM_HIGH, STREAM_LOW):
     try:
         r.xgroup_create(stream, GROUP, id="0", mkstream=True)
+        log(f"Ensured consumer group on {stream}")
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP" not in str(e):
             raise
+
+log("Worker startup complete. Waiting for jobs...")
 
 def run(cmd):
     return subprocess.run(cmd, check=False, env=os.environ).returncode
@@ -91,6 +101,8 @@ def process(file_id, stream, msg_id):
         notify_file(file_id, ft, status, msg)
         processed.add(ft)
 
+    log(f"Starting job {file_id}")
+
     if not r.set(lock_key, "1", nx=True, ex=600):
         r.xack(stream, GROUP, msg_id)
         r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "locked"})
@@ -111,6 +123,8 @@ def process(file_id, stream, msg_id):
 
     threading.Thread(target=extend_lock, daemon=True).start()
 
+    log(f"Processing audio file {file_id}.ogg")
+
     audio = f"/app/queue/{file_id}.ogg"
     txt = f"/transcripts/scripts/{file_id}.txt"
     speakers = f"/transcripts/scripts/{file_id}_speakers.txt"
@@ -118,12 +132,14 @@ def process(file_id, stream, msg_id):
 
     try:
         if not Path(audio).is_file():
+            log("Audio file missing")
             r.xack(stream, GROUP, msg_id)
             r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "missing_audio"})
             for ft in FILE_TYPES:
                 mark(ft, "error", "missing_audio")
             return
 
+        log("Splitting audio")
         if run(["/app/split_audio.sh", audio]):
             raise RuntimeError("split failed")
 
@@ -134,6 +150,7 @@ def process(file_id, stream, msg_id):
         cmd = ["python3", "/app/process_audio.py", audio]
         if force:
             cmd.append("--force")
+        log("Transcribing chunks")
         if run(cmd):
             mark("srt", "error", "transcribe failed")
             mark("txt", "error", "transcribe failed")
@@ -149,6 +166,7 @@ def process(file_id, stream, msg_id):
             speakers,
             f"/transcripts/scripts/{file_id}_chat.txt",
         ]
+        log("Merging speakers and chat")
         if run(merge_cmd):
             mark("speakers", "error", "merge failed")
             mark("chat", "error", "merge failed")
@@ -157,6 +175,7 @@ def process(file_id, stream, msg_id):
         if Path(chat).is_file():
             mark("chat", "done")
 
+        log("Generating summary")
         if run(["python3", "/app/gpt_summary.py", file_id]):
             mark("summary", "error", "summary failed")
             raise RuntimeError("summary failed")
@@ -164,6 +183,7 @@ def process(file_id, stream, msg_id):
         state = "done"
         r.xack(stream, GROUP, msg_id)
     except Exception as e:
+        log(f"Job {file_id} failed: {e}")
         r.xack(stream, GROUP, msg_id)
         r.xadd(STREAM_FAILED, {"file_id": file_id, "error": str(e)})
         for ft in FILE_TYPES:
@@ -174,6 +194,7 @@ def process(file_id, stream, msg_id):
         stop_extend.set()
         r.delete(lock_key)
         r.delete(f"force_process:{file_id}")
+        log(f"Finished job {file_id} with state {state}")
 
 def next_job():
     for stream in (STREAM_HIGH, STREAM_LOW):
@@ -194,6 +215,7 @@ def next_job():
                 msg_id, data = entry
                 file_id = extract_file_id(data)
                 if file_id:
+                    log(f"Claimed job {file_id} from {stream}")
                     return stream, msg_id, file_id
             else:
                 # ignore malformed entries
@@ -203,5 +225,7 @@ def next_job():
 while True:
     job = next_job()
     if not job:
+        time.sleep(1)
         continue
+    log(f"Processing file {job[2]}")
     process(job[2], job[0], job[1])
