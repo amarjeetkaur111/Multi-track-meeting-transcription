@@ -23,6 +23,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 
+from logger import log
+
 load_dotenv()  # Load .env as early as possible
 
 _EPOCH_13 = re.compile(r"\d{13}")  # milliseconds
@@ -177,7 +179,7 @@ def main():
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write(summary)
 
-    print(f"✔ Summary written to {summary_path}")
+    log(f"✔ Summary written to {summary_path}")
 
     sys.exit(0)
 

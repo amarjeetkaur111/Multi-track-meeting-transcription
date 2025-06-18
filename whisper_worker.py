@@ -8,13 +8,10 @@ from pathlib import Path
 import shutil
 import requests
 
-
-def log(msg: str) -> None:
-    """Print a timestamped log message to stdout."""
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
-
 import redis
+
+from logger import log
+
 
 log("YAHOOO STARTED")
 GROUP = "whisper-workers"
@@ -56,7 +53,7 @@ for stream in (STREAM_HIGH, STREAM_LOW):
         r.xgroup_create(stream, GROUP, id="0", mkstream=True)
         log(f"Ensured consumer group on {stream}")
     except redis.exceptions.ResponseError as e:
-        log(e)
+        log(str(e))
         if "BUSYGROUP" not in str(e):
             raise
 
@@ -259,7 +256,7 @@ def next_job():
         try:
             _, messages = r.xautoclaim(stream, GROUP, CONSUMER,
                                        CLAIM_IDLE_MS, "0-0", count=1)
-            log(f"Any Pending Message: {messages} from {stream}")            
+            log(f"Any Pending Message: {messages} from {stream}")
         except Exception:
             messages = []
         if not messages:
@@ -271,7 +268,7 @@ def next_job():
                 _, messages = msgs[0]
         if messages:
             msg_id, data = messages[0]
-            log(f"Looking for message: {data} with messageId {msg_id}")            
+            log(f"Looking for message: {data} with messageId {msg_id}")
             file_id = extract_file_id(data)
             url = extract_url(data)
             if file_id:

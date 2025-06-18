@@ -26,25 +26,10 @@ TRANSCRIPTS_SCRIPT_FOLDER = Path(os.getenv("TRANSCRIPTS_FOLDER"))
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(TRANSCRIPTS_SCRIPT_FOLDER, exist_ok=True)
 
-def file_exists(file_path):
-    return os.path.exists(file_path)
-
 @app.route("/", methods=["GET"])
 def index():
     return "Hello, this is the root route!", 200
 
-
-
-def download_file(url, path):
-    try:
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        with open(path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        return True
-    except requests.RequestException:
-        return False
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

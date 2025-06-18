@@ -4,6 +4,8 @@ import os
 import datetime
 import re
 
+from logger import log
+
 def get_start_time_from_filename(filename):
     """Extracts the start timestamp from the filename (assuming format: timestamp_index.srt)."""
     try:
@@ -19,7 +21,7 @@ def merge_srt(files, output_file):
     all_subs = []
     for file in files:
         if not os.path.exists(file) or os.stat(file).st_size == 0:
-            print(f"Skipping empty or missing SRT file: {file}")
+            log(f"Skipping empty or missing SRT file: {file}")
             continue
         with open(file, "r", encoding="utf-8") as f:
             subs = list(srt.parse(f.read()))
@@ -29,7 +31,7 @@ def merge_srt(files, output_file):
             all_subs.extend(adjusted)
 
     if not all_subs:
-        print("Error: No valid SRT data found. Cannot merge.")
+        log("Error: No valid SRT data found. Cannot merge.")
         sys.exit(1)
 
     # Sort by start time

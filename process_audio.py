@@ -10,17 +10,21 @@ import torch
 from dotenv import load_dotenv
 from pathlib import Path
 
-load_dotenv() 
+from logger import log
+
+load_dotenv()
 
 WHISPER_BACKEND = os.getenv("WHISPER_BACKEND", "local_whisper").lower()
-print(f"Env Value: {WHISPER_BACKEND}")  
+log(f"Env Value: {WHISPER_BACKEND}")
 
 if WHISPER_BACKEND == "azure":
     from openai import AzureOpenAI
-    print("Using Azure Whisper backend")
+    log("Using Azure Whisper backend")
+    log("Initializing Azure client")
 else:
     import whisper
-    print("Using local Whisper backend")
+    log("Using local Whisper backend")
+    log("Loading Whisper model")
 
 
 
@@ -35,6 +39,7 @@ os.makedirs("/transcripts/done", exist_ok=True)
 
 input_file = sys.argv[1]
 base_name = os.path.splitext(os.path.basename(input_file))[0]
+log(f"Starting processing for {base_name}")
 chunk_dir = f"/app/chunks/{base_name}"  # Store chunks in /app/chunks/<audio_filename>/
 output_srt = f"/app/scripts/{base_name}.srt"
 output_txt = f"/app/scripts/{base_name}.txt"
@@ -71,6 +76,7 @@ else:
     )
 
 for chunk in sorted(os.listdir(chunk_dir)):
+    log(f"Transcribing {chunk}")
     chunk_path = os.path.join(chunk_dir, chunk)
     chunk_base_name = os.path.splitext(chunk)[0]
     srt_path = os.path.join(chunk_dir, f"{chunk_base_name}.srt")  # Save SRT alongside chunk
@@ -109,12 +115,13 @@ for chunk in sorted(os.listdir(chunk_dir)):
 
     with open(srt_path, "w") as f:
         f.write(srt.compose(subs))
+    log(f"Generated {srt_path}")
 
     srt_files.append(srt_path)
 
 # Ensure there are SRT files before merging
 if not srt_files:
-    print(f"Error: No SRT files found for {base_name}. Skipping merge.")
+    log(f"Error: No SRT files found for {base_name}. Skipping merge.")
     sys.exit(1)
 
 # Sort SRT files only by timestamp (ignore index)
@@ -125,10 +132,11 @@ def extract_timestamp(filename):
 srt_files = sorted(srt_files, key=lambda x: extract_timestamp(os.path.basename(x)))
 
 # Debugging: Print sorted order to verify
-print("Merging SRT files in order:", srt_files)
+log(f"Merging SRT files in order: {srt_files}")
 
 # Step 4: Merge all transcripts
 subprocess.run(["python3", "/app/merge_transcripts.py", *srt_files, output_srt], check=True)
+log("Merged transcripts")
 
 # Step 5: Convert SRT to TXT
 def srt_to_custom_text(srt_file, output_file):
@@ -148,23 +156,26 @@ def srt_to_custom_text(srt_file, output_file):
         file.write("\n".join(formatted_lines))
 
 srt_to_custom_text(output_srt, output_txt)
+log("Converted SRT to TXT")
 
 # Step 6: Copy final SRT and TXT to /transcripts/scripts
 shutil.copy(output_srt, final_srt_transcripts)
 shutil.copy(output_txt, final_txt_transcripts)
+log("Copied transcripts to final directory")
 
 # Step 7: Move tracking file from /transcripts/queue to /transcripts/done
 if os.path.exists(queue_file):
     shutil.move(queue_file, done_file)
+    log(f"Moved {queue_file} to {done_file}")
 
-print(f"Final transcript saved to {output_srt}")
-print(f"Converted text file saved to {output_txt}")
+log(f"Final transcript saved to {output_srt}")
+log(f"Converted text file saved to {output_txt}")
 
 # Step 8: Remove chunk directory after processing
 if os.path.exists(chunk_dir):
     try:
         subprocess.run(['rm', '-rf', chunk_dir], check=True)  # Deletes the entire chunk directory
-        print(f"Successfully removed chunk directory: {chunk_dir}")
+        log(f"Successfully removed chunk directory: {chunk_dir}")
     except Exception as e:
-        print(f"Error removing chunk directory: {str(e)}")
+        log(f"Error removing chunk directory: {str(e)}")
     subprocess.run(['sync'])
