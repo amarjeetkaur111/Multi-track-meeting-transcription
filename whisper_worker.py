@@ -5,6 +5,8 @@ import json
 import time
 import threading
 from pathlib import Path
+import shutil
+import requests
 
 
 def log(msg: str) -> None:
@@ -82,6 +84,20 @@ def extract_file_id(data: dict) -> str | None:
             return None
     return None
 
+def extract_url(data: dict) -> str | None:
+    """Return the audio URL from a job entry."""
+    url = data.get("url")
+    if url:
+        return url
+    payload = data.get("payload")
+    if payload:
+        try:
+            obj = json.loads(payload)
+            return obj.get("url")
+        except Exception:
+            return None
+    return None
+
 def notify_file(file_id: str, file_type: str, status: str, error: str | None = None) -> None:
     """Publish file processing status via Redis."""
     data = {
@@ -107,7 +123,7 @@ def notify_file(file_id: str, file_type: str, status: str, error: str | None = N
     r.xadd(STREAM_FILES, {k: str(v) for k, v in data.items()})
     r.publish(STREAM_FILES, json.dumps(data))
 
-def process(file_id, stream, msg_id):
+def process(file_id, url, stream, msg_id):
     lock_key = f"{LOCK_PREFIX}{file_id}"
     index_key = f"whisper:index:{file_id}"
     processed: set[str] = set()
@@ -147,8 +163,24 @@ def process(file_id, stream, msg_id):
     chat = f"/transcripts/scripts/{file_id}_chat.txt"
 
     try:
+        log(f"Downloading audio from {url}")
+        try:
+            resp = requests.get(url, stream=True, timeout=60)
+            resp.raise_for_status()
+            with open(audio, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+        except Exception as e:
+            log(f"Failed to download audio: {e}")
+            r.xack(stream, GROUP, msg_id)
+            r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "download_failed"})
+            for ft in FILE_TYPES:
+                mark(ft, "error", "download_failed")
+            return
+
         if not Path(audio).is_file():
-            log("Audio file missing")
+            log("Audio file missing after download")
             r.xack(stream, GROUP, msg_id)
             r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "missing_audio"})
             for ft in FILE_TYPES:
@@ -210,6 +242,14 @@ def process(file_id, stream, msg_id):
         stop_extend.set()
         r.delete(lock_key)
         r.delete(f"force_process:{file_id}")
+        try:
+            Path(audio).unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            shutil.rmtree(f"/app/chunks/{file_id}")
+        except Exception:
+            pass
         log(f"Finished job {file_id} with state {state}")
 
 def next_job():
@@ -233,9 +273,10 @@ def next_job():
             msg_id, data = messages[0]
             log(f"Looking for message: {data} with messageId {msg_id}")            
             file_id = extract_file_id(data)
+            url = extract_url(data)
             if file_id:
                 log(f"Claimed job {file_id} from {stream}")
-                return stream, msg_id, file_id
+                return stream, msg_id, file_id, url
     return None
 
 while True:
@@ -244,4 +285,4 @@ while True:
         time.sleep(5)
         continue
     log(f"Processing file {job[2]}")
-    process(job[2], job[0], job[1])
+    process(job[2], job[3], job[0], job[1])
