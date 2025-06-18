@@ -1,7 +1,8 @@
 whisper.log
 whisper.log.*
-supervisord.log/.*
-supervisord.log.*
+supervisord.log/*.*
+supervisord.log/*
+supervisord.log/*.log
 app.log
 app.log.*
 gpu_watchdog.log

@@ -14,6 +14,7 @@ def log(msg: str) -> None:
 
 import redis
 
+log("YAHOOO STARTED")
 GROUP = "whisper-workers"
 STREAM_HIGH = "whisper:jobs:high"
 STREAM_LOW = "whisper:jobs:low"
@@ -25,20 +26,35 @@ CLAIM_IDLE_MS = int(os.getenv("CLAIM_IDLE_MS", "900000"))
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+MACHINE_NUMBER = os.getenv("CONSUMER_NAME") 
 
 BACKEND = sys.argv[1] if len(sys.argv) > 1 else os.getenv("WHISPER_BACKEND", "local_whisper")
-CONSUMER = os.getenv("CONSUMER_NAME", f"{BACKEND}-{os.getpid()}")
+
+CONSUMER =  f"{BACKEND}-{MACHINE_NUMBER}"
+
+log(f"Backend: {BACKEND} | WhisperBackend : {os.getenv('WHISPER_BACKEND')} | CONSUMER: {CONSUMER}")
+
 os.environ["WHISPER_BACKEND"] = BACKEND
 BLOCK_MS = 5000
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 log(f"Worker {CONSUMER} connecting to Redis at {REDIS_HOST}:{REDIS_PORT}")
 
+def purge_stale_consumers(stream, group, max_idle_ms=3600_000):
+    try:
+        for c in r.xinfo_consumers(stream, group):
+            if c['idle'] > max_idle_ms:
+                r.xgroup_delconsumer(stream, group, c['name'])
+    except Exception:
+        pass
+
 for stream in (STREAM_HIGH, STREAM_LOW):
+    purge_stale_consumers(stream, GROUP)
     try:
         r.xgroup_create(stream, GROUP, id="0", mkstream=True)
         log(f"Ensured consumer group on {stream}")
     except redis.exceptions.ResponseError as e:
+        log(e)
         if "BUSYGROUP" not in str(e):
             raise
 
@@ -197,35 +213,35 @@ def process(file_id, stream, msg_id):
         log(f"Finished job {file_id} with state {state}")
 
 def next_job():
+    log("Looking for next job...")
     for stream in (STREAM_HIGH, STREAM_LOW):
         # First try to claim messages left unacknowledged by crashed workers
         try:
-            res = r.xautoclaim(stream, GROUP, CONSUMER, CLAIM_IDLE_MS, "0-0", count=1)
-            messages = res[1] if isinstance(res, tuple) else res[0]
+            _, messages = r.xautoclaim(stream, GROUP, CONSUMER,
+                                       CLAIM_IDLE_MS, "0-0", count=1)
+            log(f"Any Pending Message: {messages} from {stream}")            
         except Exception:
             messages = []
         if not messages:
             messages = []
+            log(f"Reading From : Group:{GROUP} | Consumer: {CONSUMER} | Stream: {stream} | BlockMS: {BLOCK_MS} ")
             msgs = r.xreadgroup(GROUP, CONSUMER, {stream: ">"}, count=1, block=BLOCK_MS)
+            log(msgs)
             if msgs:
                 _, messages = msgs[0]
         if messages:
-            entry = messages[0]
-            if isinstance(entry, (list, tuple)) and len(entry) == 2:
-                msg_id, data = entry
-                file_id = extract_file_id(data)
-                if file_id:
-                    log(f"Claimed job {file_id} from {stream}")
-                    return stream, msg_id, file_id
-            else:
-                # ignore malformed entries
-                continue
+            msg_id, data = messages[0]
+            log(f"Looking for message: {data} with messageId {msg_id}")            
+            file_id = extract_file_id(data)
+            if file_id:
+                log(f"Claimed job {file_id} from {stream}")
+                return stream, msg_id, file_id
     return None
 
 while True:
     job = next_job()
     if not job:
-        time.sleep(1)
+        time.sleep(5)
         continue
     log(f"Processing file {job[2]}")
     process(job[2], job[0], job[1])

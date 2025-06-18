@@ -1,0 +1,178 @@
+[2025-06-18 10:35:07] YAHOOO STARTED
+[2025-06-18 10:35:07] Backend: open_source | WhisperBackend : azure | CONSUMER: open_source-machine-1
+[2025-06-18 10:35:07] Worker open_source-machine-1 connecting to Redis at redis_server:6379
+[2025-06-18 10:35:07] BUSYGROUP Consumer Group name already exists
+[2025-06-18 10:35:07] BUSYGROUP Consumer Group name already exists
+[2025-06-18 10:35:07] Worker startup complete. Waiting for jobs...
+[2025-06-18 10:35:07] Looking for next job...
+[2025-06-18 10:35:07] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:35:12] []
+[2025-06-18 10:35:12] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:35:17] []
+[2025-06-18 10:35:22] Looking for next job...
+[2025-06-18 10:35:22] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:35:27] []
+[2025-06-18 10:35:27] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:35:32] []
+[2025-06-18 10:35:37] Looking for next job...
+[2025-06-18 10:35:37] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:35:42] []
+[2025-06-18 10:35:42] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:35:47] []
+[2025-06-18 10:35:52] Looking for next job...
+[2025-06-18 10:35:52] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:35:57] []
+[2025-06-18 10:35:57] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:36:02] []
+[2025-06-18 10:36:07] Looking for next job...
+[2025-06-18 10:36:07] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:36:12] []
+[2025-06-18 10:36:12] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:36:17] []
+[2025-06-18 10:36:22] Looking for next job...
+[2025-06-18 10:36:22] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:36:28] []
+[2025-06-18 10:36:28] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:36:33] []
+[2025-06-18 10:36:38] Looking for next job...
+[2025-06-18 10:36:38] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:36:43] []
+[2025-06-18 10:36:43] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:36:48] []
+[2025-06-18 10:36:53] Looking for next job...
+[2025-06-18 10:36:53] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:36:58] []
+[2025-06-18 10:36:58] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:37:03] []
+[2025-06-18 10:37:08] Looking for next job...
+[2025-06-18 10:37:08] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:37:13] []
+[2025-06-18 10:37:13] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:37:18] []
+[2025-06-18 10:37:23] Looking for next job...
+[2025-06-18 10:37:23] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:37:28] []
+[2025-06-18 10:37:28] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:37:33] []
+[2025-06-18 10:37:38] Looking for next job...
+[2025-06-18 10:37:38] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:37:43] []
+[2025-06-18 10:37:43] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:37:48] []
+[2025-06-18 10:37:53] Looking for next job...
+[2025-06-18 10:37:53] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:37:58] []
+[2025-06-18 10:37:58] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:38:03] []
+[2025-06-18 10:38:08] Looking for next job...
+[2025-06-18 10:38:08] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:38:13] []
+[2025-06-18 10:38:13] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:38:18] []
+[2025-06-18 10:38:23] Looking for next job...
+[2025-06-18 10:38:23] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:38:28] []
+[2025-06-18 10:38:28] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:38:33] []
+[2025-06-18 10:38:38] Looking for next job...
+[2025-06-18 10:38:38] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:38:43] []
+[2025-06-18 10:38:43] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:38:48] []
+[2025-06-18 10:38:53] Looking for next job...
+[2025-06-18 10:38:53] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:38:58] []
+[2025-06-18 10:38:58] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:39:03] []
+[2025-06-18 10:39:08] Looking for next job...
+[2025-06-18 10:39:08] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:39:13] []
+[2025-06-18 10:39:13] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:39:18] []
+[2025-06-18 10:39:23] Looking for next job...
+[2025-06-18 10:39:23] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:39:28] []
+[2025-06-18 10:39:28] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:39:33] []
+[2025-06-18 10:39:38] Looking for next job...
+[2025-06-18 10:39:38] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:39:43] []
+[2025-06-18 10:39:43] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:39:48] []
+[2025-06-18 10:39:53] Looking for next job...
+[2025-06-18 10:39:53] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:39:59] []
+[2025-06-18 10:39:59] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:40:04] []
+[2025-06-18 10:40:09] Looking for next job...
+[2025-06-18 10:40:09] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:40:14] []
+[2025-06-18 10:40:14] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:40:19] []
+[2025-06-18 10:40:24] Looking for next job...
+[2025-06-18 10:40:24] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:40:29] []
+[2025-06-18 10:40:29] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:40:34] []
+[2025-06-18 10:40:39] Looking for next job...
+[2025-06-18 10:40:39] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:40:44] []
+[2025-06-18 10:40:44] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:40:49] []
+[2025-06-18 10:40:54] Looking for next job...
+[2025-06-18 10:40:54] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:40:59] []
+[2025-06-18 10:40:59] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:41:04] []
+[2025-06-18 10:41:09] Looking for next job...
+[2025-06-18 10:41:09] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:41:14] []
+[2025-06-18 10:41:14] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:41:19] []
+[2025-06-18 10:41:24] Looking for next job...
+[2025-06-18 10:41:24] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:41:29] []
+[2025-06-18 10:41:29] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:41:34] []
+[2025-06-18 10:41:39] Looking for next job...
+[2025-06-18 10:41:39] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:41:44] []
+[2025-06-18 10:41:44] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:41:49] []
+[2025-06-18 10:41:54] Looking for next job...
+[2025-06-18 10:41:54] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:41:59] []
+[2025-06-18 10:41:59] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:42:04] []
+[2025-06-18 10:42:09] Looking for next job...
+[2025-06-18 10:42:09] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:42:14] []
+[2025-06-18 10:42:14] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:42:19] []
+[2025-06-18 10:42:24] Looking for next job...
+[2025-06-18 10:42:24] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:42:29] []
+[2025-06-18 10:42:29] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:42:34] []
+[2025-06-18 10:42:39] Looking for next job...
+[2025-06-18 10:42:39] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:42:44] []
+[2025-06-18 10:42:44] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:42:49] []
+[2025-06-18 10:42:54] Looking for next job...
+[2025-06-18 10:42:54] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:42:59] []
+[2025-06-18 10:42:59] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:43:05] []
+[2025-06-18 10:43:10] Looking for next job...
+[2025-06-18 10:43:10] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:43:15] []
+[2025-06-18 10:43:15] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:43:20] []
+[2025-06-18 10:43:25] Looking for next job...
+[2025-06-18 10:43:25] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
+[2025-06-18 10:43:30] []
+[2025-06-18 10:43:30] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:low | BlockMS: 5000 
+[2025-06-18 10:43:35] []
+[2025-06-18 10:43:40] Looking for next job...
+[2025-06-18 10:43:40] Reading From : Group:whisper-workers | Consumer: open_source-machine-1 | Stream: whisper:jobs:high | BlockMS: 5000 
