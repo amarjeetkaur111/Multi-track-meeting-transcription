@@ -29,6 +29,8 @@ if RABBIT_USER:
     )
 connection = pika.BlockingConnection(pika.ConnectionParameters(**params))
 channel = connection.channel()
+channel.queue_declare(queue=TASK_QUEUE, durable=True, arguments={"x-max-priority": 10})
+channel.queue_declare(queue=RESULT_QUEUE, durable=True)
 channel.basic_qos(prefetch_count=1)
 
 FILE_TYPES = ["srt", "txt", "summary", "chat", "speakers"]
