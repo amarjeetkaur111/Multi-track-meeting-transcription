@@ -154,7 +154,9 @@ def process(file_id, url, stream, msg_id):
 
     log(f"Processing audio file {file_id}.ogg")
 
-    audio = f"/app/queue/{file_id}.ogg"
+    audio_dir = Path("/app/queue")
+    audio_dir.mkdir(parents=True, exist_ok=True)   # guarantees directory exists
+    audio = audio_dir / f"{file_id}.ogg"
     txt = f"/transcripts/scripts/{file_id}.txt"
     speakers = f"/transcripts/scripts/{file_id}_speakers.txt"
     chat = f"/transcripts/scripts/{file_id}_chat.txt"
