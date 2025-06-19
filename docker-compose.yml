@@ -5,6 +5,11 @@ networks:
     external: true
 
 services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: whisper-rabbit
+    networks:
+      - whisper-net
   whisper:
     build:
       context: .
@@ -14,8 +19,13 @@ services:
     networks:
       - whisper-net          # ← attach!
     environment:
-      REDIS_HOST: redis_server   # or just 'redis' if you use that alias
-      REDIS_PORT: 6379
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE:-whisper-tasks}
+      RESULT_QUEUE: ${RESULT_QUEUE:-whisper-result}
     runtime: nvidia
     deploy:
       resources:

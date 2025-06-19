@@ -17,7 +17,6 @@ RUN apt-get update && apt-get install -y \
     bc \
     git \
     supervisor \
-    redis-tools \
     net-tools \
     && rm -rf /var/lib/apt/lists/*
 
@@ -34,7 +33,7 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 RUN pip install --no-cache-dir git+https://github.com/openai/whisper.git
 
 # Install additional dependencies
-RUN pip install -U flask flask-cors requests srt redis 
+RUN pip install -U flask flask-cors requests srt pika
 
 # Optional: Install Faster-Whisper for better performance
 RUN pip install --no-cache-dir openai>=1.14 faster-whisper

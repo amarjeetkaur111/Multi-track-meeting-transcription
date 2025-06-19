@@ -12,11 +12,12 @@ This repository provides Docker configuration and scripts for running a Whisper 
    ```bash
    docker-compose up --build
    ```
-   The worker listens for jobs on Redis Streams and no longer exposes an HTTP API.
-    It publishes file processing status updates on the `whisper:file` Pub/Sub channel.
-    Failed jobs are recorded in the `whisper:failed` stream for later reprocessing.
-    Each job message must include a `file_id` field or a JSON `payload` field
-    containing `{"file_id": "..."}`.
+   The worker listens for jobs on the `whisper-tasks` RabbitMQ queue and no longer exposes an HTTP API.
+    It publishes file processing status updates on the `whisper-result` queue.
+    Configure the connection using these environment variables:
+    `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`,
+    `RABBITMQ_VHOST`, `RABBITMQ_QUEUE` and `RESULT_QUEUE`.
+    Each job message must include a `file_id` field and an audio `url`.
 
 ## Logs
 Application logs are written to `./supervisor-logs`.

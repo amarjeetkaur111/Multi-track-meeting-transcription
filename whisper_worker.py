@@ -1,107 +1,65 @@
 import os
-import sys
-import subprocess
 import json
-import time
-import threading
+import subprocess
 from pathlib import Path
 import shutil
 import requests
-
-import redis
+import pika
 
 from logger import log
 
+RABBIT_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
+RABBIT_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBIT_USER = os.getenv("RABBITMQ_USER")
+RABBIT_PASSWORD = os.getenv("RABBITMQ_PASSWORD")
+RABBIT_VHOST = os.getenv("RABBITMQ_VHOST", "/")
+TASK_QUEUE = os.getenv("RABBITMQ_QUEUE", "whisper-tasks")
+RESULT_QUEUE = os.getenv("RESULT_QUEUE", "whisper-result")
 
-log("YAHOOO STARTED")
-GROUP = "whisper-workers"
-STREAM_HIGH = "whisper:jobs:high"
-STREAM_LOW = "whisper:jobs:low"
-STREAM_FAILED = "whisper:failed"
-STREAM_FILES = "whisper:file"
+os.environ["WHISPER_BACKEND"] = "local_whisper"
+
+params = {
+    "host": RABBIT_HOST,
+    "port": RABBIT_PORT,
+    "virtual_host": RABBIT_VHOST,
+}
+if RABBIT_USER:
+    params["credentials"] = pika.PlainCredentials(
+        RABBIT_USER, RABBIT_PASSWORD or ""
+    )
+connection = pika.BlockingConnection(pika.ConnectionParameters(**params))
+channel = connection.channel()
+channel.queue_declare(queue=TASK_QUEUE, durable=True, arguments={"x-max-priority": 10})
+channel.queue_declare(queue=RESULT_QUEUE, durable=True)
+channel.basic_qos(prefetch_count=1)
+
 FILE_TYPES = ["srt", "txt", "summary", "chat", "speakers"]
-LOCK_PREFIX = "lock:"
-CLAIM_IDLE_MS = int(os.getenv("CLAIM_IDLE_MS", "900000"))
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-MACHINE_NUMBER = os.getenv("CONSUMER_NAME") 
+log(f"Connected to RabbitMQ at {RABBIT_HOST}:{RABBIT_PORT}")
 
-BACKEND = sys.argv[1] if len(sys.argv) > 1 else os.getenv("WHISPER_BACKEND", "local_whisper")
-
-CONSUMER =  f"{BACKEND}-{MACHINE_NUMBER}"
-
-log(f"Backend: {BACKEND} | WhisperBackend : {os.getenv('WHISPER_BACKEND')} | CONSUMER: {CONSUMER}")
-
-os.environ["WHISPER_BACKEND"] = BACKEND
-BLOCK_MS = 5000
-
-r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-log(f"Worker {CONSUMER} connecting to Redis at {REDIS_HOST}:{REDIS_PORT}")
-
-def purge_stale_consumers(stream, group, max_idle_ms=3600_000):
-    try:
-        for c in r.xinfo_consumers(stream, group):
-            if c['idle'] > max_idle_ms:
-                r.xgroup_delconsumer(stream, group, c['name'])
-    except Exception:
-        pass
-
-for stream in (STREAM_HIGH, STREAM_LOW):
-    purge_stale_consumers(stream, GROUP)
-    try:
-        r.xgroup_create(stream, GROUP, id="0", mkstream=True)
-        log(f"Ensured consumer group on {stream}")
-    except redis.exceptions.ResponseError as e:
-        log(str(e))
-        if "BUSYGROUP" not in str(e):
-            raise
-
-log("Worker startup complete. Waiting for jobs...")
 
 def run(cmd):
     return subprocess.run(cmd, check=False, env=os.environ).returncode
 
-def extract_file_id(data: dict) -> str | None:
-    """Return the file_id from a job entry.
 
-    Messages may include the file_id directly or wrapped in a JSON
-    string under the ``payload`` field as used by the Laravel producer.
-    """
+def parse_payload(body: bytes) -> dict:
+    """Decode message body and unpack nested payload field if present."""
+    try:
+        data = json.loads(body)
+        if isinstance(data, dict) and "payload" in data:
+            try:
+                nested = json.loads(data["payload"])
+                if isinstance(nested, dict):
+                    data.update(nested)
+            except Exception:
+                pass
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
-    fid = data.get("file_id")
-    if fid:
-        return fid
-    payload = data.get("payload")
-    if payload:
-        try:
-            obj = json.loads(payload)
-            return obj.get("file_id")
-        except Exception:
-            return None
-    return None
-
-def extract_url(data: dict) -> str | None:
-    """Return the audio URL from a job entry."""
-    url = data.get("url")
-    if url:
-        return url
-    payload = data.get("payload")
-    if payload:
-        try:
-            obj = json.loads(payload)
-            return obj.get("url")
-        except Exception:
-            return None
-    return None
 
 def notify_file(file_id: str, file_type: str, status: str, error: str | None = None) -> None:
-    """Publish file processing status via Redis."""
-    data = {
-        "file_id": file_id,
-        "type": file_type,
-        "status": status,
-    }
+    data = {"file_id": file_id, "type": file_type, "status": status}
     base_url = os.getenv("BBB_URL")
     if status == "done" and base_url:
         base_url = base_url.rstrip("/")
@@ -116,13 +74,15 @@ def notify_file(file_id: str, file_type: str, status: str, error: str | None = N
             data["script"] = f"{base_url}/{suffix}"
     if error:
         data["error"] = error
-    # Redis streams require string values
-    r.xadd(STREAM_FILES, {k: str(v) for k, v in data.items()})
-    r.publish(STREAM_FILES, json.dumps(data))
+    channel.basic_publish(
+        exchange="",
+        routing_key=RESULT_QUEUE,
+        body=json.dumps(data),
+        properties=pika.BasicProperties(delivery_mode=2),
+    )
 
-def process(file_id, url, stream, msg_id):
-    lock_key = f"{LOCK_PREFIX}{file_id}"
-    index_key = f"whisper:index:{file_id}"
+
+def process(file_id: str, url: str) -> None:
     processed: set[str] = set()
     state = "error"
 
@@ -132,30 +92,8 @@ def process(file_id, url, stream, msg_id):
 
     log(f"Starting job {file_id}")
 
-    if not r.set(lock_key, "1", nx=True, ex=600):
-        r.xack(stream, GROUP, msg_id)
-        r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "locked"})
-        for ft in FILE_TYPES:
-            mark(ft, "error", "locked")
-        return
-
-    r.hset(index_key, mapping={"state": "processing"})
-
-    stop_extend = threading.Event()
-
-    def extend_lock() -> None:
-        while not stop_extend.wait(300):
-            try:
-                r.pexpire(lock_key, 1200)
-            except Exception:
-                pass
-
-    threading.Thread(target=extend_lock, daemon=True).start()
-
-    log(f"Processing audio file {file_id}.ogg")
-
     audio_dir = Path("/app/queue")
-    audio_dir.mkdir(parents=True, exist_ok=True)   # guarantees directory exists
+    audio_dir.mkdir(parents=True, exist_ok=True)
     audio = audio_dir / f"{file_id}.ogg"
     txt = f"/transcripts/scripts/{file_id}.txt"
     speakers = f"/transcripts/scripts/{file_id}_speakers.txt"
@@ -172,16 +110,12 @@ def process(file_id, url, stream, msg_id):
                         f.write(chunk)
         except Exception as e:
             log(f"Failed to download audio: {e}")
-            r.xack(stream, GROUP, msg_id)
-            r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "download_failed"})
             for ft in FILE_TYPES:
                 mark(ft, "error", "download_failed")
             return
 
         if not Path(audio).is_file():
             log("Audio file missing after download")
-            r.xack(stream, GROUP, msg_id)
-            r.xadd(STREAM_FAILED, {"file_id": file_id, "error": "missing_audio"})
             for ft in FILE_TYPES:
                 mark(ft, "error", "missing_audio")
             return
@@ -190,13 +124,9 @@ def process(file_id, url, stream, msg_id):
         if run(["/app/split_audio.sh", audio]):
             raise RuntimeError("split failed")
 
-        force = r.get(f"force_process:{file_id}") == "1"
-
         env = os.environ.copy()
-        env["WHISPER_BACKEND"] = BACKEND
+        env["WHISPER_BACKEND"] = "local_whisper"
         cmd = ["python3", "/app/process_audio.py", audio]
-        if force:
-            cmd.append("--force")
         log("Transcribing chunks")
         if run(cmd):
             mark("srt", "error", "transcribe failed")
@@ -228,19 +158,12 @@ def process(file_id, url, stream, msg_id):
             raise RuntimeError("summary failed")
         mark("summary", "done")
         state = "done"
-        r.xack(stream, GROUP, msg_id)
     except Exception as e:
         log(f"Job {file_id} failed: {e}")
-        r.xack(stream, GROUP, msg_id)
-        r.xadd(STREAM_FAILED, {"file_id": file_id, "error": str(e)})
         for ft in FILE_TYPES:
             if ft not in processed:
                 mark(ft, "error", str(e))
     finally:
-        r.hset(index_key, mapping={"state": state})
-        stop_extend.set()
-        r.delete(lock_key)
-        r.delete(f"force_process:{file_id}")
         try:
             Path(audio).unlink(missing_ok=True)
         except Exception:
@@ -251,37 +174,22 @@ def process(file_id, url, stream, msg_id):
             pass
         log(f"Finished job {file_id} with state {state}")
 
-def next_job():
-    log("Looking for next job...")
-    for stream in (STREAM_HIGH, STREAM_LOW):
-        # First try to claim messages left unacknowledged by crashed workers
-        try:
-            _, messages = r.xautoclaim(stream, GROUP, CONSUMER,
-                                       CLAIM_IDLE_MS, "0-0", count=1)
-            log(f"Any Pending Message: {messages} from {stream}")
-        except Exception:
-            messages = []
-        if not messages:
-            messages = []
-            log(f"Reading From : Group:{GROUP} | Consumer: {CONSUMER} | Stream: {stream} | BlockMS: {BLOCK_MS} ")
-            msgs = r.xreadgroup(GROUP, CONSUMER, {stream: ">"}, count=1, block=BLOCK_MS)
-            log(msgs)
-            if msgs:
-                _, messages = msgs[0]
-        if messages:
-            msg_id, data = messages[0]
-            log(f"Looking for message: {data} with messageId {msg_id}")
-            file_id = extract_file_id(data)
-            url = extract_url(data)
-            if file_id:
-                log(f"Claimed job {file_id} from {stream}")
-                return stream, msg_id, file_id, url
-    return None
 
-while True:
-    job = next_job()
-    if not job:
-        time.sleep(5)
-        continue
-    log(f"Processing file {job[2]}")
-    process(job[2], job[3], job[0], job[1])
+def on_message(ch, method, properties, body) -> None:
+    try:
+        data = parse_payload(body)
+        file_id = data.get("file_id")
+        url = data.get("url")
+        if not file_id or not url:
+            raise ValueError("Invalid payload")
+        process(file_id, url)
+    except Exception as e:
+        log(f"Message processing failed: {e}")
+    finally:
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+
+log("Worker waiting for jobs...")
+channel.basic_consume(queue=TASK_QUEUE, on_message_callback=on_message)
+channel.start_consuming()
+
