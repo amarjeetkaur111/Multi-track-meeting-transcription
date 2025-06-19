@@ -8,13 +8,13 @@ import pika
 
 from logger import log
 
-RABBIT_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
-RABBIT_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBIT_HOST = os.getenv("RABBITMQ_HOST")
+RABBIT_PORT = int(os.getenv("RABBITMQ_PORT"))
 RABBIT_USER = os.getenv("RABBITMQ_USER")
 RABBIT_PASSWORD = os.getenv("RABBITMQ_PASSWORD")
-RABBIT_VHOST = os.getenv("RABBITMQ_VHOST", "/")
-TASK_QUEUE = os.getenv("RABBITMQ_QUEUE", "whisper-tasks")
-RESULT_QUEUE = os.getenv("RESULT_QUEUE", "whisper-result")
+RABBIT_VHOST = os.getenv("RABBITMQ_VHOST")
+TASK_QUEUE = os.getenv("RABBITMQ_QUEUE")
+RESULT_QUEUE = os.getenv("RESULT_QUEUE")
 
 os.environ["WHISPER_BACKEND"] = "local_whisper"
 

@@ -19,13 +19,13 @@ services:
     networks:
       - whisper-net          # ← attach!
     environment:
-      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
-      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
-      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
-      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE:-whisper-tasks}
-      RESULT_QUEUE: ${RESULT_QUEUE:-whisper-result}
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE}
+      RESULT_QUEUE: ${RESULT_QUEUE}
     runtime: nvidia
     deploy:
       resources:
