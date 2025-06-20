@@ -72,6 +72,7 @@ def notify_file(file_id: str, file_type: str, status: str, error: str | None = N
         }.get(file_type)
         if suffix:
             data["script"] = f"{base_url}/{suffix}"
+    log(f"File URL: {base_url}/{suffix}") 
     if error:
         data["error"] = error
     channel.basic_publish(

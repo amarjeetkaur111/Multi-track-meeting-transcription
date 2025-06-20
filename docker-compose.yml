@@ -1,23 +1,12 @@
 version: '3.9'
 
-networks:
-  whisper-net:               # external = already exists
-    external: true
-
 services:
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: whisper-rabbit
-    networks:
-      - whisper-net
   whisper:
     build:
       context: .
       dockerfile: Dockerfile
     image: whisper-worker-image
     container_name: whisper-python-worker
-    networks:
-      - whisper-net          # ← attach!
     environment:
       RABBITMQ_HOST: ${RABBITMQ_HOST}
       RABBITMQ_PORT: ${RABBITMQ_PORT}

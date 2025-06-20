@@ -1,0 +1,32 @@
+Traceback (most recent call last):
+  File "/app/whisper_worker.py", line 32, in <module>
+    channel.queue_declare(queue=TASK_QUEUE, durable=True, arguments={"x-max-priority": 10})
+  File "/usr/local/lib/python3.10/dist-packages/pika/adapters/blocking_connection.py", line 2524, in queue_declare
+    self._flush_output(declare_ok_result.is_ready)
+  File "/usr/local/lib/python3.10/dist-packages/pika/adapters/blocking_connection.py", line 1357, in _flush_output
+    raise self._closing_reason  # pylint: disable=E0702
+pika.exceptions.ChannelClosedByBroker: (406, "PRECONDITION_FAILED - inequivalent arg 'x-max-priority' for queue 'whisper-tasks' in vhost '/': received the value '10' of type 'signedint' but current is none")
+Traceback (most recent call last):
+  File "/app/whisper_worker.py", line 32, in <module>
+    channel.queue_declare(queue=TASK_QUEUE, durable=True, arguments={"x-max-priority": 10})
+  File "/usr/local/lib/python3.10/dist-packages/pika/adapters/blocking_connection.py", line 2524, in queue_declare
+    self._flush_output(declare_ok_result.is_ready)
+  File "/usr/local/lib/python3.10/dist-packages/pika/adapters/blocking_connection.py", line 1357, in _flush_output
+    raise self._closing_reason  # pylint: disable=E0702
+pika.exceptions.ChannelClosedByBroker: (406, "PRECONDITION_FAILED - inequivalent arg 'x-max-priority' for queue 'whisper-tasks' in vhost '/': received the value '10' of type 'signedint' but current is none")
+Traceback (most recent call last):
+  File "/app/whisper_worker.py", line 32, in <module>
+    channel.queue_declare(queue=TASK_QUEUE, durable=True, arguments={"x-max-priority": 10})
+  File "/usr/local/lib/python3.10/dist-packages/pika/adapters/blocking_connection.py", line 2524, in queue_declare
+    self._flush_output(declare_ok_result.is_ready)
+  File "/usr/local/lib/python3.10/dist-packages/pika/adapters/blocking_connection.py", line 1357, in _flush_output
+    raise self._closing_reason  # pylint: disable=E0702
+pika.exceptions.ChannelClosedByBroker: (406, "PRECONDITION_FAILED - inequivalent arg 'x-max-priority' for queue 'whisper-tasks' in vhost '/': received the value '10' of type 'signedint' but current is none")
+Traceback (most recent call last):
+  File "/app/whisper_worker.py", line 32, in <module>
+    channel.queue_declare(queue=TASK_QUEUE, durable=True, arguments={"x-max-priority": 10})
+  File "/usr/local/lib/python3.10/dist-packages/pika/adapters/blocking_connection.py", line 2524, in queue_declare
+    self._flush_output(declare_ok_result.is_ready)
+  File "/usr/local/lib/python3.10/dist-packages/pika/adapters/blocking_connection.py", line 1357, in _flush_output
+    raise self._closing_reason  # pylint: disable=E0702
+pika.exceptions.ChannelClosedByBroker: (406, "PRECONDITION_FAILED - inequivalent arg 'x-max-priority' for queue 'whisper-tasks' in vhost '/': received the value '10' of type 'signedint' but current is none")

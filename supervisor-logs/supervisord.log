@@ -1,0 +1,14 @@
+2025-06-20 09:41:44,434 INFO Set uid to user 0 succeeded
+2025-06-20 09:41:44,437 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+2025-06-20 09:41:44,437 INFO supervisord started with pid 28
+2025-06-20 09:41:45,439 INFO spawned: 'gpu-watchdog_00' with pid 29
+2025-06-20 09:41:45,440 INFO spawned: 'whisper-open_00' with pid 30
+2025-06-20 09:41:46,171 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-20 09:41:47,172 INFO success: gpu-watchdog_00 entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-06-20 09:41:47,173 INFO spawned: 'whisper-open_00' with pid 47
+2025-06-20 09:41:47,954 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-20 09:41:49,957 INFO spawned: 'whisper-open_00' with pid 49
+2025-06-20 09:41:50,656 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-20 09:41:53,660 INFO spawned: 'whisper-open_00' with pid 51
+2025-06-20 09:41:54,371 INFO exited: whisper-open_00 (exit status 1; not expected)
+2025-06-20 09:41:55,373 INFO gave up: whisper-open_00 entered FATAL state, too many start retries too quickly
