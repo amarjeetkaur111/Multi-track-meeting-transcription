@@ -61,6 +61,7 @@ def parse_payload(body: bytes) -> dict:
 def notify_file(file_id: str, file_type: str, status: str, error: str | None = None) -> None:
     data = {"file_id": file_id, "type": file_type, "status": status}
     base_url = os.getenv("BBB_URL")
+    suffix: str | None = None
     if status == "done" and base_url:
         base_url = base_url.rstrip("/")
         suffix = {
@@ -72,7 +73,9 @@ def notify_file(file_id: str, file_type: str, status: str, error: str | None = N
         }.get(file_type)
         if suffix:
             data["script"] = f"{base_url}/{suffix}"
-    log(f"File URL: {base_url}/{suffix}") 
+            log(f"File URL: {base_url}/{suffix}")
+    elif base_url:
+        log(f"File URL: {base_url}/{file_id} ({status})")
     if error:
         data["error"] = error
     channel.basic_publish(
