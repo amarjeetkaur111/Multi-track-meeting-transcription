@@ -38,7 +38,17 @@ FILE_TYPES = ["srt", "txt", "summary", "chat", "speakers"]
 log(f"Connected to RabbitMQ at {RABBIT_HOST}:{RABBIT_PORT}")
 
 
-def run(cmd):
+def run(cmd, log_path: str | None = None) -> int:
+    """Run *cmd* and optionally append output to *log_path*."""
+    if log_path:
+        with open(log_path, "a") as f:
+            return subprocess.run(
+                cmd,
+                check=False,
+                env=os.environ,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+            ).returncode
     return subprocess.run(cmd, check=False, env=os.environ).returncode
 
 
@@ -126,7 +136,7 @@ def process(file_id: str, url: str) -> None:
             return
 
         log("Splitting audio")
-        if run(["/app/split_audio.sh", audio]):
+        if run(["/app/split_audio.sh", audio], log_path="/app/logs/splitting.log"):
             raise RuntimeError("split failed")
 
         env = os.environ.copy()
