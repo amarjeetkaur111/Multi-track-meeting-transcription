@@ -93,7 +93,14 @@ for chunk in sorted(os.listdir(chunk_dir)):
             )
         segments = resp.segments
     else:
-        result = model.transcribe(chunk_path)
+        if os.path.getsize(chunk_path) == 0:
+            log(f"Skipping zero-byte chunk {chunk}")
+            continue
+        try:
+            result = model.transcribe(chunk_path)
+        except RuntimeError as e:
+            log(f"Skipping corrupt chunk {chunk}: {e}")
+            continue
         segments = result["segments"]
 
     subs = []

@@ -149,9 +149,15 @@ if (( $(echo "$remaining_duration > 0" | bc -l) )); then
     ffmpeg -y -i "$input_file" -ss "$start_time" -c:a libvorbis "$output_file" &
 fi
 
+
 wait
 
 for f in "$output_dir"/*.ogg; do
+    if [ ! -s "$f" ]; then
+        echo "Warning: removing zero byte chunk $f"
+        rm -f "$f"
+        continue
+    fi
     ensure_size "$f"
 done
 

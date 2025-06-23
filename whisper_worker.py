@@ -102,6 +102,7 @@ def process(file_id: str, url: str) -> None:
     txt = f"/transcripts/scripts/{file_id}.txt"
     speakers = f"/transcripts/scripts/{file_id}_speakers.txt"
     chat = f"/transcripts/scripts/{file_id}_chat.txt"
+    summary = f"/transcripts/scripts/{file_id}_summary.txt"
 
     try:
         log(f"Downloading audio from {url}")
@@ -156,11 +157,25 @@ def process(file_id: str, url: str) -> None:
         if Path(chat).is_file():
             mark("chat", "done")
 
-        log("Generating summary")
-        if run(["python3", "/app/gpt_summary.py", file_id]):
-            mark("summary", "error", "summary failed")
-            raise RuntimeError("summary failed")
-        mark("summary", "done")
+        word_count = 0
+        if Path(speakers).is_file():
+            try:
+                text = Path(speakers).read_text(encoding="utf-8")
+                word_count = len(text.split())
+            except Exception:
+                pass
+
+        if word_count < 500:
+            log(f"Transcript has only {word_count} words. Skipping summarization.")
+            with open(summary, "w") as f:
+                f.write("File was too small to summarize.")
+            mark("summary", "done")
+        else:
+            log("Generating summary")
+            if run(["python3", "/app/gpt_summary.py", file_id]):
+                mark("summary", "error", "summary failed")
+                raise RuntimeError("summary failed")
+            mark("summary", "done")
         state = "done"
     except Exception as e:
         log(f"Job {file_id} failed: {e}")
