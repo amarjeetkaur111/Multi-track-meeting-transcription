@@ -16,7 +16,7 @@ This repository provides Docker configuration and scripts for running a Whisper 
     It publishes file processing status updates on the `whisper-result` queue.
     Configure the connection using these environment variables:
     `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`,
-    `RABBITMQ_VHOST`, `RABBITMQ_QUEUE` and `RESULT_QUEUE`.
+    `RABBITMQ_VHOST`, `RABBITMQ_QUEUE`, `RESULT_QUEUE` and `RABBITMQ_HEARTBEAT`.
     Each job message must include a `file_id` field and an audio `url`.
 
 ## Logs

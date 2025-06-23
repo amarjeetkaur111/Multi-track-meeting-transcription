@@ -25,3 +25,4 @@ __pycache__/
 supervisor-logs/supervisord.log
 .gitignore
 supervisor-logs/split.log
+supervisor-logs/supervisord.log
