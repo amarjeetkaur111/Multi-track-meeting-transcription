@@ -3,6 +3,7 @@ import json
 import subprocess
 from pathlib import Path
 import shutil
+import time
 import requests
 import pika
 
@@ -15,6 +16,7 @@ RABBIT_PASSWORD = os.getenv("RABBITMQ_PASSWORD")
 RABBIT_VHOST = os.getenv("RABBITMQ_VHOST")
 TASK_QUEUE = os.getenv("RABBITMQ_QUEUE")
 RESULT_QUEUE = os.getenv("RESULT_QUEUE")
+HEARTBEAT = int(os.getenv("RABBITMQ_HEARTBEAT", "600"))
 
 os.environ["WHISPER_BACKEND"] = "local_whisper"
 
@@ -22,16 +24,24 @@ params = {
     "host": RABBIT_HOST,
     "port": RABBIT_PORT,
     "virtual_host": RABBIT_VHOST,
+    "heartbeat": HEARTBEAT,
 }
 if RABBIT_USER:
     params["credentials"] = pika.PlainCredentials(
         RABBIT_USER, RABBIT_PASSWORD or ""
     )
-connection = pika.BlockingConnection(pika.ConnectionParameters(**params))
-channel = connection.channel()
-channel.queue_declare(queue=TASK_QUEUE, durable=True, arguments={"x-max-priority": 10})
-channel.queue_declare(queue=RESULT_QUEUE, durable=True)
-channel.basic_qos(prefetch_count=1)
+
+
+def connect() -> tuple[pika.BlockingConnection, pika.adapters.blocking_connection.BlockingChannel]:
+    conn = pika.BlockingConnection(pika.ConnectionParameters(**params))
+    ch = conn.channel()
+    ch.queue_declare(queue=TASK_QUEUE, durable=True, arguments={"x-max-priority": 10})
+    ch.queue_declare(queue=RESULT_QUEUE, durable=True)
+    ch.basic_qos(prefetch_count=1)
+    return conn, ch
+
+
+connection, channel = connect()
 
 FILE_TYPES = ["srt", "txt", "summary", "chat", "speakers"]
 
@@ -215,10 +225,35 @@ def on_message(ch, method, properties, body) -> None:
     except Exception as e:
         log(f"Message processing failed: {e}")
     finally:
-        ch.basic_ack(delivery_tag=method.delivery_tag)
+        try:
+            if ch.is_open:
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+        except pika.exceptions.ChannelWrongStateError as e:
+            log(f"Ack failed: {e}")
 
 
-log("Worker waiting for jobs...")
-channel.basic_consume(queue=TASK_QUEUE, on_message_callback=on_message)
-channel.start_consuming()
+def consume() -> None:
+    global connection, channel
+    while True:
+        try:
+            channel.basic_consume(queue=TASK_QUEUE, on_message_callback=on_message)
+            log("Worker waiting for jobs...")
+            channel.start_consuming()
+        except pika.exceptions.AMQPError as e:
+            log(f"Connection lost: {e}. Reconnecting in 5s...")
+            try:
+                channel.close()
+            except Exception:
+                pass
+            try:
+                connection.close()
+            except Exception:
+                pass
+            time.sleep(5)
+            connection, channel = connect()
+        except KeyboardInterrupt:
+            break
+
+
+consume()
 
