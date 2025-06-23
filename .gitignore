@@ -26,4 +26,3 @@ supervisor-logs/supervisord.log
 .gitignore
 supervisor-logs/split.log
 supervisor-logs/supervisord.log
-supervisor-logs/splitting.log

@@ -118,10 +118,8 @@ def main():
 
         Follow these rules in addition to the existing instructions below.
 
-        1. **Detect** the primary language of the transcript which is the mostly spoken language during the transcript. 
-            • At the very top of the output, write the language name **translated into that same language** followed by the meeting date, also formatted in that language’s normal long-date style.  
-             – *Example (Spanish)*: “**Español – 9 de junio de 2025**”  
-             – *Example (Arabic)*: “**العربية – ٩ يونيو ٢٠٢٥**”
+        1. Set the primary language of the transcript to English.
+            • At the very top of the output, write the meeting date in normal long-date style.  
         2. **Translate** every static label—section titles, headings, bullet-labels—into that language.  
         3. Produce **all** output (headings + content) in the primary language.
         4. if the transcript is primarily in English then summary should be in English and should not include any text from other languages rather than the primary language, The summary should remain consistent with the primary language throughout.
