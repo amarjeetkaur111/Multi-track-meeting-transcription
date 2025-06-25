@@ -102,7 +102,7 @@ ensure_size() {
     fi
 }
 
-silence_info=$(ffmpeg -y -i "$input_file" -af "silencedetect=noise=-25dB:d=10" -f null - 2>&1 | \
+silence_info=$(ffmpeg -y -i "$input_file" -af "silencedetect=noise=-25dB:d=7" -f null - 2>&1 | \
     grep -oP 'silence_(start|end): \K[0-9]+\.?[0-9]*')
 
 declare -a silence_times=($silence_info)
@@ -158,7 +158,7 @@ for f in "$output_dir"/*.ogg; do
         rm -f "$f"
         continue
     fi
-    ensure_size "$f"
+    # ensure_size "$f"
 done
 
 echo "Audio split successfully into '$output_dir'"
