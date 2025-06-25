@@ -29,14 +29,11 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 # Install Whisper dependencies (Torch with CUDA)
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-# Install OpenAI Whisper from GitHub (ensures latest updates)
-RUN pip install --no-cache-dir git+https://github.com/openai/whisper.git
 
-# Install additional dependencies
-RUN pip install -U flask flask-cors requests srt pika
-
-# Optional: Install Faster-Whisper for better performance
-RUN pip install --no-cache-dir openai>=1.14 faster-whisper
+# Install application dependencies including Faster-Whisper
+RUN pip install --no-cache-dir \
+    flask flask-cors requests srt pika \
+    openai>=1.14 faster-whisper
 
 # Install OpenAI and other dependencies
 RUN pip install --upgrade pysrt tiktoken python-dotenv

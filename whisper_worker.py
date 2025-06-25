@@ -17,8 +17,6 @@ TASK_QUEUE      = os.getenv("RABBITMQ_QUEUE")
 RESULT_QUEUE    = os.getenv("RESULT_QUEUE")
 HEARTBEAT       = int(os.getenv("RABBITMQ_HEARTBEAT", "60"))  # client proposal
 
-os.environ["WHISPER_BACKEND"] = "local_whisper"
-
 PARAMS = dict(
     host=RABBIT_HOST,
     port=RABBIT_PORT,

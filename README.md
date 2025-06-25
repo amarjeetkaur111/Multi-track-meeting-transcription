@@ -1,6 +1,6 @@
 # BiggerBlueButton Whisper
 
-This repository provides Docker configuration and scripts for running a Whisper transcription service with optional GPU acceleration.
+This repository provides Docker configuration and scripts for running a Whisper transcription service with optional GPU acceleration. The local backend now leverages **faster-whisper** for significantly improved performance when processing audio on the GPU.
 
 ## Requirements
 - Docker and Docker Compose
@@ -19,10 +19,19 @@ This repository provides Docker configuration and scripts for running a Whisper 
    `RABBITMQ_VHOST`, `RABBITMQ_QUEUE`, `RESULT_QUEUE` and `RABBITMQ_HEARTBEAT`.
    The default heartbeat is disabled (0) to avoid disconnects during long jobs.
     Each job message must include a `file_id` field and an audio `url`.
+    The `WHISPER_MODEL` variable controls which Faster-Whisper model is loaded
+    for local transcription (defaults to `large-v3`).
+    Use `WHISPER_BATCH_SIZE` to set how many audio frames the model processes at
+    once (defaults to `16`). When supported by the installed Faster-Whisper
+    version, this helps keep the GPU busy during transcription. The worker will
+    also set `num_workers` to the available CPU cores if the API supports it.
+    `WHISPER_CONCURRENT_CHUNKS` controls how many audio chunks are transcribed in
+    parallel (defaults to `2`) so the GPU remains active while multiple threads
+    feed data to the model.
 
 ## Logs
-Application logs are written to `./supervisor-logs`.
-- `whisper_open.log` / `whisper_azure.log` – worker output
+- Application logs are written to `./supervisor-logs`.
+- `whisper.log` – worker output
 - `gpu_watchdog.log` – GPU availability monitoring
 
 ## GPU Watchdog

@@ -7,6 +7,8 @@ import shutil
 import re
 import requests
 import torch
+import inspect
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -14,17 +16,12 @@ from logger import log
 
 load_dotenv()
 
-WHISPER_BACKEND = os.getenv("WHISPER_BACKEND", "local_whisper").lower()
-log(f"Env Value: {WHISPER_BACKEND}")
+WHISPER_BATCH_SIZE = int(os.getenv("WHISPER_BATCH_SIZE", "16"))
+WHISPER_CONCURRENT_CHUNKS = int(os.getenv("WHISPER_CONCURRENT_CHUNKS", "2"))
 
-if WHISPER_BACKEND == "azure":
-    from openai import AzureOpenAI
-    log("Using Azure Whisper backend")
-    log("Initializing Azure client")
-else:
-    import whisper
-    log("Using local Whisper backend")
-    log("Loading Whisper model")
+from faster_whisper import WhisperModel
+log("Using Faster-Whisper backend")
+log("Loading Whisper model")
 
 
 
@@ -58,50 +55,39 @@ final_txt_transcripts = Path(os.getenv("TRANSCRIPTS_FOLDER")) /f"{base_name}.txt
 # Step 2: Split the audio file into chunks
 # subprocess.run(["/app/split_audio.sh", input_file], check=True)
 
-# Step 3: Process each chunk with Whisper AI or Azure Whisper
+# Step 3: Process each chunk with Faster-Whisper
 srt_files = []
 
-if WHISPER_BACKEND == "azure":
-    azure_client = AzureOpenAI(
-        azure_endpoint=os.getenv("AZURE_WHISPER_ENDPOINT", "").rstrip("/"),
-        api_key=os.getenv("AZURE_WHISPER_KEY"),
-        api_version=os.getenv("AZURE_WHISPER_API_VERSION"),
-    )
-    azure_deployment = os.getenv("AZURE_WHISPER_DEPLOYMENT")
-else:
-    model = whisper.load_model(
-        "turbo",
-        download_root="/root/.cache/whisper",
-        device="cuda",
-    )
+model_size = os.getenv("WHISPER_MODEL", "turbo")
+model = WhisperModel(
+    model_size,
+    device="cuda",
+    compute_type="float16",
+    download_root="/root/.cache/whisper",
+)
 
-for chunk in sorted(os.listdir(chunk_dir)):
-    log(f"Transcribing {chunk}")
-    chunk_path = os.path.join(chunk_dir, chunk)
-    chunk_base_name = os.path.splitext(chunk)[0]
-    srt_path = os.path.join(chunk_dir, f"{chunk_base_name}.srt")  # Save SRT alongside chunk
+def transcribe_chunk(chunk_name: str):
+    if not chunk_name.endswith(".ogg"):
+        return None
+    log(f"Transcribing {chunk_name}")
+    chunk_path = os.path.join(chunk_dir, chunk_name)
+    chunk_base = os.path.splitext(chunk_name)[0]
+    srt_path = os.path.join(chunk_dir, f"{chunk_base}.srt")
 
-    if not chunk.endswith(".ogg"):  # Skip non-audio files
-        continue
-
-    if WHISPER_BACKEND == "azure":
-        with open(chunk_path, "rb") as audio_file:
-            resp = azure_client.audio.transcriptions.create(
-                file=audio_file,
-                model=azure_deployment,
-                response_format="verbose_json",
-            )
-        segments = resp.segments
-    else:
-        if os.path.getsize(chunk_path) == 0:
-            log(f"Skipping zero-byte chunk {chunk}")
-            continue
-        try:
-            result = model.transcribe(chunk_path)
-        except RuntimeError as e:
-            log(f"Skipping corrupt chunk {chunk}: {e}")
-            continue
-        segments = result["segments"]
+    if os.path.getsize(chunk_path) == 0:
+        log(f"Skipping zero-byte chunk {chunk_name}")
+        return None
+    try:
+        transcribe_args = {}
+        sig = inspect.signature(model.transcribe).parameters
+        if "batch_size" in sig:
+            transcribe_args["batch_size"] = WHISPER_BATCH_SIZE
+        if "num_workers" in sig:
+            transcribe_args["num_workers"] = os.cpu_count()
+        segments, _ = model.transcribe(chunk_path, **transcribe_args)
+    except RuntimeError as e:
+        log(f"Skipping corrupt chunk {chunk_name}: {e}")
+        return None
 
     subs = []
     for i, segment in enumerate(segments):
@@ -113,18 +99,22 @@ for chunk in sorted(os.listdir(chunk_dir)):
             start = getattr(segment, "start")
             end = getattr(segment, "end")
             text = getattr(segment, "text")
-
         start_time = datetime.timedelta(seconds=start)
         end_time = datetime.timedelta(seconds=end)
-        subs.append(
-            srt.Subtitle(index=i, start=start_time, end=end_time, content=text)
-        )
+        subs.append(srt.Subtitle(index=i, start=start_time, end=end_time, content=text))
 
     with open(srt_path, "w") as f:
         f.write(srt.compose(subs))
     log(f"Generated {srt_path}")
+    return srt_path
 
-    srt_files.append(srt_path)
+
+with ThreadPoolExecutor(max_workers=WHISPER_CONCURRENT_CHUNKS) as executor:
+    futures = [executor.submit(transcribe_chunk, c) for c in sorted(os.listdir(chunk_dir))]
+    for future in futures:
+        result = future.result()
+        if result:
+            srt_files.append(result)
 
 # Ensure there are SRT files before merging
 if not srt_files:
