@@ -15,13 +15,15 @@ RABBIT_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "")
 RABBIT_VHOST    = os.getenv("RABBITMQ_VHOST")
 TASK_QUEUE      = os.getenv("RABBITMQ_QUEUE")
 RESULT_QUEUE    = os.getenv("RESULT_QUEUE")
-HEARTBEAT       = int(os.getenv("RABBITMQ_HEARTBEAT", "60"))  # client proposal
+HEARTBEAT       = int(os.getenv("RABBITMQ_HEARTBEAT", "1800"))  # client proposal
+TIMEOUT         = int(os.getenv("RABBITMQ_TIMEOUT", "1800"))  # client proposal
 
 PARAMS = dict(
     host=RABBIT_HOST,
     port=RABBIT_PORT,
     virtual_host=RABBIT_VHOST,
     heartbeat=HEARTBEAT,
+    socket_timeout=TIMEOUT
 )
 if RABBIT_USER:
     PARAMS["credentials"] = pika.PlainCredentials(RABBIT_USER, RABBIT_PASSWORD)
@@ -123,6 +125,7 @@ def notify_file(file_id: str, ftype: str, status: str,
         log(f"File URL: {base_url}/{file_id} ({status})")
     if error:
         data["error"] = error
+    log("notify files called")
     channel.basic_publish(
         exchange="",
         routing_key=RESULT_QUEUE,
@@ -239,6 +242,7 @@ def on_message(ch, method, props, body):
         log(f"Message processing failed: {e}")
     finally:
         try:
+            log("Acknowledged successfully")
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
             log(f"Ack failed: {e}. Message will be re-queued.")

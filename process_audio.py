@@ -6,22 +6,29 @@ import datetime
 import shutil
 import re
 import requests
-import torch
-import inspect
-from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from pathlib import Path
 
 from logger import log
-
 load_dotenv()
 
-WHISPER_BATCH_SIZE = int(os.getenv("WHISPER_BATCH_SIZE", "16"))
-WHISPER_CONCURRENT_CHUNKS = int(os.getenv("WHISPER_CONCURRENT_CHUNKS", "2"))
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
 
-from faster_whisper import WhisperModel
-log("Using Faster-Whisper backend")
+try:
+    import whisper
+except ImportError:
+    log("openai-whisper package not available")
+    sys.exit(1)
+
+log("Using openai-whisper backend")
 log("Loading Whisper model")
+
+model_size = os.getenv("WHISPER_MODEL", "turbo")
+model = whisper.load_model(
+    model_size,
+    device=WHISPER_DEVICE,
+    download_root="/root/.cache/whisper",
+)
 
 
 
@@ -55,16 +62,8 @@ final_txt_transcripts = Path(os.getenv("TRANSCRIPTS_FOLDER")) /f"{base_name}.txt
 # Step 2: Split the audio file into chunks
 # subprocess.run(["/app/split_audio.sh", input_file], check=True)
 
-# Step 3: Process each chunk with Faster-Whisper
+# Step 3: Process each chunk with openai-whisper
 srt_files = []
-
-model_size = os.getenv("WHISPER_MODEL", "turbo")
-model = WhisperModel(
-    model_size,
-    device="cuda",
-    compute_type="float16",
-    download_root="/root/.cache/whisper",
-)
 
 def transcribe_chunk(chunk_name: str):
     if not chunk_name.endswith(".ogg"):
@@ -77,17 +76,14 @@ def transcribe_chunk(chunk_name: str):
     if os.path.getsize(chunk_path) == 0:
         log(f"Skipping zero-byte chunk {chunk_name}")
         return None
+
     try:
-        transcribe_args = {}
-        sig = inspect.signature(model.transcribe).parameters
-        if "batch_size" in sig:
-            transcribe_args["batch_size"] = WHISPER_BATCH_SIZE
-        if "num_workers" in sig:
-            transcribe_args["num_workers"] = os.cpu_count()
-        segments, _ = model.transcribe(chunk_path, **transcribe_args)
+        result = model.transcribe(chunk_path)
     except RuntimeError as e:
         log(f"Skipping corrupt chunk {chunk_name}: {e}")
         return None
+
+    segments = result["segments"]
 
     subs = []
     for i, segment in enumerate(segments):
@@ -109,12 +105,11 @@ def transcribe_chunk(chunk_name: str):
     return srt_path
 
 
-with ThreadPoolExecutor(max_workers=WHISPER_CONCURRENT_CHUNKS) as executor:
-    futures = [executor.submit(transcribe_chunk, c) for c in sorted(os.listdir(chunk_dir))]
-    for future in futures:
-        result = future.result()
-        if result:
-            srt_files.append(result)
+
+for chunk_name in sorted(os.listdir(chunk_dir)):
+    result = transcribe_chunk(chunk_name)
+    if result:
+        srt_files.append(result)
 
 # Ensure there are SRT files before merging
 if not srt_files:
