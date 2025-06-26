@@ -47,7 +47,36 @@ def start_connection():
                 pass
             stop_evt.wait(30)                       # every 30 s
 
+    def _on_conn_close(_conn, rc, rt):
+        log(f"RabbitMQ connection closed ({rc}): {rt}")
+
+    def _on_chan_close(_ch, rc, rt):
+        log(f"RabbitMQ channel closed ({rc}): {rt}")
+
+    if hasattr(conn, "add_on_close_callback"):
+        conn.add_on_close_callback(_on_conn_close)
+    else:
+        def _monitor_conn():
+            while not stop_evt.is_set():
+                if getattr(conn, "is_closed", False):
+                    _on_conn_close(conn, 0, "closed")
+                    break
+                stop_evt.wait(1)
+        threading.Thread(target=_monitor_conn, daemon=True).start()
+
+    if hasattr(ch, "add_on_close_callback"):
+        ch.add_on_close_callback(_on_chan_close)
+    else:
+        def _monitor_chan():
+            while not stop_evt.is_set():
+                if getattr(ch, "is_closed", False) or not getattr(ch, "is_open", True):
+                    _on_chan_close(ch, 0, "closed")
+                    break
+                stop_evt.wait(1)
+        threading.Thread(target=_monitor_chan, daemon=True).start()
+
     threading.Thread(target=_hb, daemon=True).start()
+    log("Heartbeat thread started")
     log(f"Connected to RabbitMQ at {RABBIT_HOST}:{RABBIT_PORT} "
         f"(heartbeat={HEARTBEAT})")
     return conn, ch, stop_evt
@@ -211,8 +240,8 @@ def on_message(ch, method, props, body):
     finally:
         try:
             ch.basic_ack(delivery_tag=method.delivery_tag)
-        except pika.exceptions.ChannelWrongStateError as e:
-            log(f"Ack failed (channel closed): {e}. Message will be re-queued.")
+        except Exception as e:
+            log(f"Ack failed: {e}. Message will be re-queued.")
 
 # ────────────────  main consume loop  ────────────────
 def consume():
