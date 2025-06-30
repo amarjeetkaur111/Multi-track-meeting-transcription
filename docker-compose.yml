@@ -16,7 +16,6 @@ services:
       RABBITMQ_QUEUE: ${RABBITMQ_QUEUE}
       RESULT_QUEUE: ${RESULT_QUEUE}
       RABBITMQ_HEARTBEAT: ${RABBITMQ_HEARTBEAT}
-    runtime: nvidia
     deploy:
       resources:
         reservations:

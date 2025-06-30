@@ -1,275 +1,212 @@
 #!/usr/bin/env python3
-# whisper_worker.py  –  GPU Whisper worker with rock-solid heartbeat (Option B)
-
-import os, json, subprocess, shutil, time, threading
+# heartbeat_async_whisper_worker.py
+# ------------------------------------------------------------
+#  * Async SelectConnection (auto heart-beat)
+#  * Background thread for long job
+#  * Per-file notifications (srt, txt, summary, chat, speakers)
+#  * TEST_MODE=1  -> just sleep(120) and emit fake files
+# ------------------------------------------------------------
+import os, json, threading, subprocess, shutil, time
 from pathlib import Path
-
-import requests, pika
+import pika, requests
+from dotenv import load_dotenv
 from logger import log
 
-# ────────────────  RabbitMQ / env  ────────────────
-RABBIT_HOST     = os.getenv("RABBITMQ_HOST")
-RABBIT_PORT     = int(os.getenv("RABBITMQ_PORT"))
-RABBIT_USER     = os.getenv("RABBITMQ_USER")
-RABBIT_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "")
-RABBIT_VHOST    = os.getenv("RABBITMQ_VHOST")
-TASK_QUEUE      = os.getenv("RABBITMQ_QUEUE")
-RESULT_QUEUE    = os.getenv("RESULT_QUEUE")
-HEARTBEAT       = int(os.getenv("RABBITMQ_HEARTBEAT", "1800"))  # client proposal
-TIMEOUT         = int(os.getenv("RABBITMQ_TIMEOUT", "1800"))  # client proposal
+load_dotenv()
 
-PARAMS = dict(
-    host=RABBIT_HOST,
-    port=RABBIT_PORT,
-    virtual_host=RABBIT_VHOST,
-    heartbeat=HEARTBEAT,
-    socket_timeout=TIMEOUT
+# ─────────── ENV / RabbitMQ ───────────
+RABBIT_HOST     = os.getenv("RABBITMQ_HOST", "localhost")
+RABBIT_PORT     = int(os.getenv("RABBITMQ_PORT", "5672"))
+RABBIT_USER     = os.getenv("RABBITMQ_USER", "guest")
+RABBIT_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "guest")
+RABBIT_VHOST    = os.getenv("RABBITMQ_VHOST", "/")
+
+TASK_QUEUE      = os.getenv("RABBITMQ_QUEUE",  "whisper_jobs")
+RESULT_QUEUE    = os.getenv("RESULT_QUEUE",     "whisper_results")
+
+HEARTBEAT       = int(os.getenv("RABBITMQ_HEARTBEAT", "30"))
+HB_LOG_INTERVAL = HEARTBEAT                    # how often to print a tick
+PREFETCH        = 1
+JOB_TIMEOUT     = 60*60                        # 1 h
+TEST_MODE       = False
+
+BBB_URL         = os.getenv("BBB_URL", "").rstrip("/")
+CREDENTIALS     = pika.PlainCredentials(RABBIT_USER, RABBIT_PASSWORD)
+
+PARAMS = pika.ConnectionParameters(
+    host     = RABBIT_HOST,
+    port     = RABBIT_PORT,
+    virtual_host = RABBIT_VHOST,
+    credentials  = CREDENTIALS,
+    heartbeat    = HEARTBEAT,
+    blocked_connection_timeout = HEARTBEAT * 2,
 )
-if RABBIT_USER:
-    PARAMS["credentials"] = pika.PlainCredentials(RABBIT_USER, RABBIT_PASSWORD)
 
 FILE_TYPES = ["srt", "txt", "summary", "chat", "speakers"]
 
-# ────────────────  connection + background heartbeat  ────────────────
-def start_connection():
-    conn = pika.BlockingConnection(pika.ConnectionParameters(**PARAMS))
-    ch   = conn.channel()
-    ch.queue_declare(queue=TASK_QUEUE,   durable=True,
-                     arguments={"x-max-priority": 10})
-    ch.queue_declare(queue=RESULT_QUEUE, durable=True)
-    ch.basic_qos(prefetch_count=1)
+# ─────────── heartbeat logger ───────────
+def schedule_hb_log(conn, chan):
+    def _log():
+        log(f"HB tick – conn_open: {conn.is_open} "
+            f"chan_open: {chan.is_open}")
+        conn.ioloop.call_later(HB_LOG_INTERVAL, _log)
+    conn.ioloop.call_later(HB_LOG_INTERVAL, _log)
 
-    stop_evt = threading.Event()
-
-    def _hb():
-        while not stop_evt.is_set():
-            try:
-                conn.process_data_events()          # sends heartbeat
-            except Exception:
-                pass
-            stop_evt.wait(30)                       # every 30 s
-
-    def _on_conn_close(_conn, rc, rt):
-        log(f"RabbitMQ connection closed ({rc}): {rt}")
-
-    def _on_chan_close(_ch, rc, rt):
-        log(f"RabbitMQ channel closed ({rc}): {rt}")
-
-    if hasattr(conn, "add_on_close_callback"):
-        conn.add_on_close_callback(_on_conn_close)
-    else:
-        def _monitor_conn():
-            while not stop_evt.is_set():
-                if getattr(conn, "is_closed", False):
-                    _on_conn_close(conn, 0, "closed")
-                    break
-                stop_evt.wait(1)
-        threading.Thread(target=_monitor_conn, daemon=True).start()
-
-    if hasattr(ch, "add_on_close_callback"):
-        ch.add_on_close_callback(_on_chan_close)
-    else:
-        def _monitor_chan():
-            while not stop_evt.is_set():
-                if getattr(ch, "is_closed", False) or not getattr(ch, "is_open", True):
-                    _on_chan_close(ch, 0, "closed")
-                    break
-                stop_evt.wait(1)
-        threading.Thread(target=_monitor_chan, daemon=True).start()
-
-    threading.Thread(target=_hb, daemon=True).start()
-    log("Heartbeat thread started")
-    log(f"Connected to RabbitMQ at {RABBIT_HOST}:{RABBIT_PORT} "
-        f"(heartbeat={HEARTBEAT})")
-    return conn, ch, stop_evt
-
-
-connection, channel, hb_evt = start_connection()
-
-# ────────────────  helpers  ────────────────
-def run(cmd, log_path: str | None = None) -> int:
-    if log_path:
-        with open(log_path, "a") as f:
-            return subprocess.run(cmd, check=False, env=os.environ,
-                                  stdout=f, stderr=subprocess.STDOUT).returncode
-    return subprocess.run(cmd, check=False, env=os.environ).returncode
-
-
-def parse_payload(body: bytes) -> dict:
-    try:
-        data = json.loads(body)
-        if isinstance(data, dict) and "payload" in data:
-            nested = json.loads(data["payload"])
-            if isinstance(nested, dict):
-                data.update(nested)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def notify_file(file_id: str, ftype: str, status: str,
-                error: str | None = None) -> None:
-    data      = {"file_id": file_id, "type": ftype, "status": status}
-    base_url  = os.getenv("BBB_URL", "").rstrip("/")
-    suffix    = {
-        "srt":      f"{file_id}.srt",
-        "txt":      f"{file_id}.txt",
-        "summary":  f"{file_id}_summary.txt",
-        "speakers": f"{file_id}_speakers.txt",
-        "chat":     f"{file_id}_chat.txt",
-    }.get(ftype)
-    if status == "done" and base_url and suffix:
-        data["script"] = f"{base_url}/{suffix}"
-        log(f"File URL: {base_url}/{suffix}")
-    elif base_url:
-        log(f"File URL: {base_url}/{file_id} ({status})")
+# ─────────── RESULT_QUEUE notifier ───────────
+def notify_file(channel, file_id, ftype, status, error=None):
+    body = {"file_id": file_id, "type": ftype, "status": status}
+    if status == "done" and BBB_URL:
+        suffix = {
+            "srt":      f"{file_id}.srt",
+            "txt":      f"{file_id}.txt",
+            "summary":  f"{file_id}_summary.txt",
+            "chat":     f"{file_id}_chat.txt",
+            "speakers": f"{file_id}_speakers.txt",
+        }.get(ftype)
+        if suffix:
+            body["script"] = f"{BBB_URL}/{suffix}"
     if error:
-        data["error"] = error
-    log("notify files called")
+        body["error"] = error
     channel.basic_publish(
         exchange="",
         routing_key=RESULT_QUEUE,
-        body=json.dumps(data),
+        body=json.dumps(body),
         properties=pika.BasicProperties(delivery_mode=2),
     )
+    log(f"[notify] {file_id} {ftype} → {status}")
 
-# ────────────────  main job pipeline  ────────────────
-def process(file_id: str, url: str) -> None:
-    processed, state = set(), "error"
+# ─────────── heavy job (split + Whisper) or dummy sleep ───────────
+def run_pipeline(audio_path, file_id):
+    if TEST_MODE:
+        log("TEST_MODE=1 → sleeping 60 s instead of real processing")
+        time.sleep(60)
+        # create two tiny dummy files so downstream steps see something
+        Path(f"/transcripts/scripts/{file_id}.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nTEST\n")
+        Path(f"/transcripts/scripts/{file_id}.txt").write_text("TEST")
+        return
 
-    def mark(ft, st, msg=None):
-        notify_file(file_id, ft, st, msg)
-        processed.add(ft)
+    # real path: split then process_audio.py
+    if subprocess.run(["/app/split_audio.sh", audio_path]).returncode != 0:
+        raise RuntimeError("split_audio.sh failed")
+    rc = subprocess.run(["python3", "/app/process_audio.py", audio_path]).returncode
+    if rc != 0:
+        raise RuntimeError(f"process_audio.py exited {rc}")
 
-    log(f"Starting job {file_id}")
+def notify_op(channel, file_id: str, ftype: str,
+              status: str, error: str | None = None):
+    """
+    Returns a lambda that will publish one status line to RESULT_QUEUE
+    when executed in the I/O thread.
+    """
+    return lambda ch=channel: notify_file(ch, file_id, ftype, status, error)
 
-    audio_dir = Path("/app/queue");  audio_dir.mkdir(parents=True, exist_ok=True)
-    audio     = audio_dir / f"{file_id}.ogg"
-    txt       = f"/transcripts/scripts/{file_id}.txt"
-    speakers  = f"/transcripts/scripts/{file_id}_speakers.txt"
-    chat      = f"/transcripts/scripts/{file_id}_chat.txt"
-    summary   = f"/transcripts/scripts/{file_id}_summary.txt"
+
+# ─────────── worker thread ───────────
+def spawn_worker(connection, channel, method, body: bytes):
+    """Runs in its own *thread*.  Never touches the channel directly."""
+    tag = method.delivery_tag
+    enqueue = connection.ioloop.add_callback_threadsafe     # shorthand
+    processed: set[str] = set()                             # file types done
+
+    # ── helpers to ACK / NACK in the I/O thread ─────────────────────
+    def ack():
+        log(f"ACK tag={tag}")
+        enqueue(lambda ch=channel: ch.basic_ack(tag))
+
+    def nack(requeue=True):
+        log(f"NACK tag={tag} requeue={requeue}")
+        enqueue(lambda ch=channel: ch.basic_nack(tag, requeue=requeue))
+
+    # ── 1. parse payload ────────────────────────────────────────────
+    try:
+        payload = json.loads(body)
+        file_id, url = payload["file_id"], payload["url"]
+    except Exception as exc:
+        log(f"Bad payload: {exc}")
+        nack(False)
+        return
+
+    # ── 2. download audio ───────────────────────────────────────────
+    audio_tmp = f"/app/queue/{file_id}.ogg"
+    try:
+        with requests.get(url, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(audio_tmp, "wb") as f:
+                for chunk in r.iter_content(8192):
+                    f.write(chunk)
+    except Exception as exc:
+        log(f"Download failed: {exc}")
+        # queue one “error” message per file type, then requeue job
+        for ft in FILE_TYPES:
+            enqueue(notify_op(channel, file_id, ft, "error", "download_failed"))
+        nack(True)
+        return
+
+    # ── 3. watchdog (auto-nack after timeout) ───────────────────────
+    timer = threading.Timer(JOB_TIMEOUT, lambda: nack(True))
+    timer.start()
 
     try:
-        # ── 1. download ────────────────────────────────────────────────
-        log(f"Downloading audio from {url}")
-        try:
-            with requests.get(url, stream=True, timeout=60) as resp:
-                resp.raise_for_status()
-                with open(audio, "wb") as f:
-                    for chunk in resp.iter_content(8192):
-                        if chunk:
-                            f.write(chunk)
-        except Exception as e:
-            log(f"Failed to download audio: {e}")
-            for ft in FILE_TYPES: mark(ft, "error", "download_failed")
-            return
-        if not audio.exists():
-            for ft in FILE_TYPES: mark(ft, "error", "missing_audio")
-            return
+        # ── 4. heavy work (split + whisper or TEST_MODE sleep) ──────
+        run_pipeline(audio_tmp, file_id)
 
-        # ── 2. split audio ────────────────────────────────────────────
-        log("Splitting audio")
-        if run(["/app/split_audio.sh", audio], log_path="/app/logs/split.log"):
-            raise RuntimeError("split failed")
+        # ── 5. enqueue “done” notifications then ACK ────────────────
+        for ft in FILE_TYPES:
+            enqueue(notify_op(channel, file_id, ft, "done"))
+            processed.add(ft)
+        ack()
 
-        # ── 3. transcribe ─────────────────────────────────────────────
-        log("Transcribing chunks")
-        if run(["python3", "/app/process_audio.py", audio]):
-            mark("srt", "error", "transcribe failed")
-            mark("txt", "error", "transcribe failed")
-            raise RuntimeError("transcribe failed")
-        mark("srt", "done")
-        mark("txt", "done")
-
-        # ── 4. merge speakers + chat ──────────────────────────────────
-        log("Merging speakers and chat")
-        merge_cmd = [
-            "python3", "/app/merge_speakers.py",
-            f"/raw/{file_id}/events.xml", txt, speakers,
-            f"/transcripts/scripts/{file_id}_chat.txt",
-        ]
-        if run(merge_cmd):
-            mark("speakers", "error", "merge failed")
-            mark("chat", "error", "merge failed")
-            raise RuntimeError("merge failed")
-        mark("speakers", "done")
-        if Path(chat).is_file():
-            mark("chat", "done")
-
-        # ── 5. summarise (≥500 words) ─────────────────────────────────
-        word_count = 0
-        if Path(speakers).is_file():
-            try:
-                word_count = len(Path(speakers).read_text("utf-8").split())
-            except Exception:
-                pass
-
-        if word_count < 500:
-            log(f"Transcript has only {word_count} words → skip summary")
-            Path(summary).write_text("File was too small to summarise.")
-            mark("summary", "done")
-        else:
-            log("Generating summary")
-            if run(["python3", "/app/gpt_summary.py", file_id]):
-                mark("summary", "error", "summary failed")
-                raise RuntimeError("summary failed")
-            mark("summary", "done")
-
-        state = "done"
-
-    except Exception as e:
-        log(f"Job {file_id} failed: {e}")
+    except Exception as exc:
+        log(f"Job {file_id} failed: {exc}")
+        # send “error” for anything not already marked done
         for ft in (ft for ft in FILE_TYPES if ft not in processed):
-            mark(ft, "error", str(e))
+            enqueue(notify_op(channel, file_id, ft, "error", str(exc)))
+        nack(True)
 
     finally:
-        try:    audio.unlink(missing_ok=True)
-        except Exception: pass
-        try:    shutil.rmtree(f"/app/chunks/{file_id}")
-        except Exception: pass
-        log(f"Finished job {file_id} with state {state}")
+        timer.cancel()
+        try:
+            Path(audio_tmp).unlink(missing_ok=True)
+        except Exception:
+            pass
 
-# ────────────────  consumer callback  ────────────────
+
+# ─────────── SelectConnection callbacks ───────────
 def on_message(ch, method, props, body):
+    threading.Thread(
+        target=spawn_worker,
+        args=(ch.connection, ch, method, body),
+        daemon=True
+    ).start()
+
+def on_channel_open(channel):
+    log("Channel open – declaring queues")
+    channel.queue_declare(queue=TASK_QUEUE, durable=True,
+                          arguments={"x-max-priority": 10})
+    channel.queue_declare(queue=RESULT_QUEUE, durable=True)
+    channel.basic_qos(prefetch_count=PREFETCH)
+    channel.basic_consume(queue=TASK_QUEUE, on_message_callback=on_message)
+    schedule_hb_log(channel.connection, channel)
+    log("Consumer ready – waiting for jobs")
+
+def on_connection_open(conn):
+    conn.channel(on_open_callback=on_channel_open)
+
+# ─────────── main ───────────
+def main():
+    log(f"Connect {RABBIT_HOST}:{RABBIT_PORT} HB={HEARTBEAT}s "
+        f"TEST_MODE={TEST_MODE}")
+    conn = pika.SelectConnection(
+        parameters=PARAMS,
+        on_open_callback=on_connection_open,
+        on_open_error_callback=lambda c,e: log(f"Conn open error: {e}"),
+        on_close_callback=lambda c,rc,txt: log(f"Conn closed: {rc} {txt}")
+    )
     try:
-        data    = parse_payload(body)
-        file_id = data.get("file_id");  url = data.get("url")
-        if not file_id or not url:
-            raise ValueError("Invalid payload")
-        process(file_id, url)
-    except Exception as e:
-        log(f"Message processing failed: {e}")
-    finally:
-        try:
-            log("Acknowledged successfully")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-        except Exception as e:
-            log(f"Ack failed: {e}. Message will be re-queued.")
-
-# ────────────────  main consume loop  ────────────────
-def consume():
-    global connection, channel, hb_evt
-    while True:
-        try:
-            channel.basic_consume(queue=TASK_QUEUE, on_message_callback=on_message)
-            log("Worker waiting for jobs…")
-            channel.start_consuming()
-
-        except (pika.exceptions.AMQPError,
-                pika.exceptions.ChannelWrongStateError) as e:
-            log(f"Connection lost: {e}. Re-connecting in 5 s…")
-            hb_evt.set()         # stop old HB thread
-            try: channel.close()
-            except Exception: pass
-            try: connection.close()
-            except Exception: pass
-            time.sleep(5)
-            connection, channel, hb_evt = start_connection()
-
-        except KeyboardInterrupt:
-            hb_evt.set()
-            break
+        conn.ioloop.start()
+    except KeyboardInterrupt:
+        log("Ctrl-C – exit")
+        conn.close(); conn.ioloop.start()
 
 if __name__ == "__main__":
-    consume()
+    main()
