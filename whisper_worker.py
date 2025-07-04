@@ -92,6 +92,26 @@ def run_pipeline(audio_path, file_id):
     if rc != 0:
         raise RuntimeError(f"process_audio.py exited {rc}")
 
+def merge_speakers_chat(file_id: str) -> None:
+    """Run merge_speakers.py to add speaker labels and extract chat."""
+    txt = f"/transcripts/scripts/{file_id}.txt"
+    speakers = f"/transcripts/scripts/{file_id}_speakers.txt"
+    chat = f"/transcripts/scripts/{file_id}_chat.txt"
+    events = f"/raw/{file_id}/events.xml"
+    rc = subprocess.run([
+        "python3", "/app/merge_speakers.py",
+        events, txt, speakers, chat,
+    ]).returncode
+    if rc != 0:
+        raise RuntimeError(f"merge_speakers.py exited {rc}")
+
+
+def generate_summary(file_id: str) -> None:
+    """Run gpt_summary.py for *file_id*."""
+    rc = subprocess.run(["python3", "/app/gpt_summary.py", file_id]).returncode
+    if rc != 0:
+        raise RuntimeError(f"gpt_summary.py exited {rc}")
+
 def notify_op(channel, file_id: str, ftype: str,
               status: str, error: str | None = None):
     """
@@ -150,10 +170,38 @@ def spawn_worker(connection, channel, method, body: bytes):
         # ── 4. heavy work (split + whisper or TEST_MODE sleep) ──────
         run_pipeline(audio_tmp, file_id)
 
-        # ── 5. enqueue “done” notifications then ACK ────────────────
-        for ft in FILE_TYPES:
+        # notify srt + txt first
+        for ft in ("srt", "txt"):
             enqueue(notify_op(channel, file_id, ft, "done"))
             processed.add(ft)
+
+        # ── merge speakers + chat ─────────────────────────────────
+        try:
+            merge_speakers_chat(file_id)
+            enqueue(notify_op(channel, file_id, "speakers", "done"))
+            processed.add("speakers")
+            enqueue(notify_op(channel, file_id, "chat", "done"))
+            processed.add("chat")
+        except Exception as exc_merge:
+            log(f"Merge failed: {exc_merge}")
+            for ft in ("speakers", "chat", "summary"):
+                enqueue(notify_op(channel, file_id, ft, "error", str(exc_merge)))
+                processed.add(ft)
+            ack()
+            return
+
+        # ── GPT summary ───────────────────────────────────────────
+        try:
+            generate_summary(file_id)
+            enqueue(notify_op(channel, file_id, "summary", "done"))
+            processed.add("summary")
+        except Exception as exc_sum:
+            log(f"Summary failed: {exc_sum}")
+            enqueue(notify_op(channel, file_id, "summary", "error", str(exc_sum)))
+            processed.add("summary")
+            ack()
+            return
+
         ack()
 
     except Exception as exc:
