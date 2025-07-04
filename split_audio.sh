@@ -1,5 +1,7 @@
 #!/bin/bash
 
+exec >> /app/logs/split.log 2>&1
+
 if ! command -v ffmpeg &> /dev/null
 then
     echo "ffmpeg is not installed."
