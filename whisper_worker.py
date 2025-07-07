@@ -172,8 +172,8 @@ def spawn_worker(connection, channel, method, body: bytes):
     except Exception as exc:
         log(f"Download failed: {exc}")
         # queue one “error” message per file type and stop processing
-        for ft in FILE_TYPES:
-            enqueue(notify_op(channel, file_id, ft, "error", "download_failed"))
+        # only notify failure for the first expected file (srt)
+        enqueue(notify_op(channel, file_id, "srt", "error", "download_failed"))
         ack()
         return
 
@@ -263,8 +263,15 @@ def spawn_worker(connection, channel, method, body: bytes):
         }
         msg = err_map.get(str(exc), str(exc))
         log(f"Job {file_id} failed: {msg}")
-        # send “error” for anything not already marked done
-        for ft in (ft for ft in FILE_TYPES if ft not in processed):
+        # notify failure only for the next expected file type
+        def first_missing(done: set[str]):
+            for ft in FILE_TYPES:
+                if ft not in done:
+                    return ft
+            return None
+
+        ft = first_missing(processed)
+        if ft:
             enqueue(notify_op(channel, file_id, ft, "error", msg))
         ack()
 
