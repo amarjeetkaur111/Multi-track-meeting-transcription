@@ -227,12 +227,11 @@ def spawn_worker(connection, channel, method, body: bytes):
         enqueue(notify_op(channel, file_id, "speakers", "done"))
         processed.add("speakers")
 
-        if not chat_path.exists():
-            enqueue(notify_op(channel, file_id, "chat", "error",
-                             str(merge_err) if merge_err else "chat_failed"))
-        else:
+        if chat_path.exists() and chat_path.stat().st_size > 0:
             enqueue(notify_op(channel, file_id, "chat", "done"))
             processed.add("chat")
+        elif merge_err is not None:
+            enqueue(notify_op(channel, file_id, "chat", "error", str(merge_err)))
 
         # ── GPT summary ───────────────────────────────────────────
         sum_err = None

@@ -307,14 +307,16 @@ def merge_speakers_with_transcript(transcript_file: str,
 # ---------------------------------------------------------------------------
 def extract_chat_events(xml_path: str,
                         user_map: Dict[str, str],
-                        chat_out_path: str) -> None:
+                        chat_out_path: str) -> bool:
     """
     Write chat lines using the same recording timeline as captions:
       [HH:MM:SS.mmm][Alice]: Hello …
+    Returns ``True`` if at least one chat message was written,
+    otherwise ``False``.
     """
     if not os.path.exists(xml_path):
         logging.error("events.xml not found: %s", xml_path)
-        return
+        return False
 
     root = ET.parse(xml_path).getroot()
     events = root.findall("event")
@@ -338,9 +340,14 @@ def extract_chat_events(xml_path: str,
 
         chat_lines.append(f"[{ms_to_hhmmss(rec_ms)}][{name}]: {message}")
 
+    if not chat_lines:
+        logging.info("No chat messages – skipping chat file")
+        return False
+
     with open(chat_out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(chat_lines))
     logging.info("Chat events written to %s", chat_out_path)
+    return True
 
 # ---------------------------------------------------------------------------
 # main entrypoint
