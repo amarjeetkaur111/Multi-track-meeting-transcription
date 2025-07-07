@@ -106,7 +106,12 @@ def transcribe_chunk(chunk_name: str):
 
 
 
-for chunk_name in sorted(os.listdir(chunk_dir)):
+chunk_list = [f for f in os.listdir(chunk_dir) if f.endswith(".ogg")]
+if not chunk_list:
+    log(f"No audio chunks found for {base_name}")
+    sys.exit(2)
+
+for chunk_name in sorted(chunk_list):
     result = transcribe_chunk(chunk_name)
     if result:
         srt_files.append(result)
@@ -114,7 +119,7 @@ for chunk_name in sorted(os.listdir(chunk_dir)):
 # Ensure there are SRT files before merging
 if not srt_files:
     log(f"Error: No SRT files found for {base_name}. Skipping merge.")
-    sys.exit(1)
+    sys.exit(3)
 
 # Sort SRT files only by timestamp (ignore index)
 def extract_timestamp(filename):
@@ -127,7 +132,11 @@ srt_files = sorted(srt_files, key=lambda x: extract_timestamp(os.path.basename(x
 log(f"Merging SRT files in order: {srt_files}")
 
 # Step 4: Merge all transcripts
-subprocess.run(["python3", "/app/merge_transcripts.py", *srt_files, output_srt], check=True)
+try:
+    subprocess.run(["python3", "/app/merge_transcripts.py", *srt_files, output_srt], check=True)
+except subprocess.CalledProcessError as e:
+    log(f"merge_transcripts.py failed: {e}")
+    sys.exit(4)
 log("Merged transcripts")
 
 # Step 5: Convert SRT to TXT

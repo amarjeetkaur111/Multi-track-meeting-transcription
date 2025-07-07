@@ -93,6 +93,12 @@ def run_pipeline(audio_path, file_id):
     if subprocess.run(["/app/split_audio.sh", audio_path]).returncode != 0:
         raise RuntimeError("split_audio.sh failed")
     rc = subprocess.run(["python3", "/app/process_audio.py", audio_path]).returncode
+    if rc == 2:
+        raise RuntimeError("no_audio")
+    if rc == 3:
+        raise RuntimeError("no_srt")
+    if rc == 4:
+        raise RuntimeError("merge_transcripts_failed")
     if rc != 0:
         raise RuntimeError(f"process_audio.py exited {rc}")
 
@@ -107,14 +113,16 @@ def merge_speakers_chat(file_id: str) -> None:
         events, txt, speakers, chat,
     ]).returncode
     if rc != 0:
-        raise RuntimeError(f"merge_speakers.py exited {rc}")
+        raise RuntimeError("merge_speakers_failed")
 
 
 def generate_summary(file_id: str) -> None:
     """Run gpt_summary.py for *file_id*."""
     rc = subprocess.run(["python3", "/app/gpt_summary.py", file_id]).returncode
+    if rc == 2:
+        raise RuntimeError("transcript_not_found")
     if rc != 0:
-        raise RuntimeError(f"gpt_summary.py exited {rc}")
+        raise RuntimeError("gpt_summary_failed")
 
 def notify_op(channel, file_id: str, ftype: str,
               status: str, error: str | None = None):
@@ -239,10 +247,19 @@ def spawn_worker(connection, channel, method, body: bytes):
         ack()
 
     except Exception as exc:
-        log(f"Job {file_id} failed: {exc}")
+        err_map = {
+            "no_audio": "No Audio in meeting",
+            "no_srt": "No srt file for the meeting",
+            "merge_transcripts_failed": "Could not merge transcripts",
+            "merge_speakers_failed": "Speaker merge failed",
+            "gpt_summary_failed": "Summary generation failed",
+            "transcript_not_found": "Transcript not found",
+        }
+        msg = err_map.get(str(exc), str(exc))
+        log(f"Job {file_id} failed: {msg}")
         # send “error” for anything not already marked done
         for ft in (ft for ft in FILE_TYPES if ft not in processed):
-            enqueue(notify_op(channel, file_id, ft, "error", str(exc)))
+            enqueue(notify_op(channel, file_id, ft, "error", msg))
         ack()
 
     finally:
