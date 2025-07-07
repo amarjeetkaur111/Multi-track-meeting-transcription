@@ -127,6 +127,8 @@ def generate_summary(file_id: str) -> None:
     rc = subprocess.run(["python3", "/app/gpt_summary.py", file_id]).returncode
     if rc == 2:
         raise RuntimeError("transcript_not_found")
+    if rc == 3:
+        raise RuntimeError("file_too_small")
     if rc != 0:
         raise RuntimeError("gpt_summary_failed")
 
@@ -257,6 +259,7 @@ def spawn_worker(connection, channel, method, body: bytes):
             "no_srt": "No srt file for the meeting",
             "merge_transcripts_failed": "Could not merge transcripts",
             "merge_speakers_failed": "Speaker merge failed",
+            "file_too_small": "File too small for summarization",
             "gpt_summary_failed": "Summary generation failed",
             "transcript_not_found": "Transcript not found",
         }

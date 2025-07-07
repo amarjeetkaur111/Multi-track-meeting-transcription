@@ -102,6 +102,15 @@ def main():
     transcript = transcript_path.read_text(encoding="utf-8")
     chat = chat_path.read_text(encoding="utf-8") if chat_path.is_file() else ""
 
+    # Abort early if transcript is too short
+    word_count = len(transcript.split())
+    if word_count < 500:
+        print(
+            f"Transcript has only {word_count} words. Too small for summarization.",
+            file=sys.stderr,
+        )
+        sys.exit(3)
+
     # print(f"--- Transcript ({transcript_path}) ---\n{transcript}\n--- End transcript ---")
 
     # print(f"--- Chat log ({chat_path}) ---\n{chat or '[empty]'}\n--- End chat log ---\n")
