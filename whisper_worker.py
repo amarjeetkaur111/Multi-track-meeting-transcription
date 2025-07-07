@@ -54,19 +54,23 @@ def schedule_hb_log(conn, chan):
 
 # ─────────── RESULT_QUEUE notifier ───────────
 def notify_file(channel, file_id, ftype, status, error=None):
-    body = {"file_id": file_id, "type": ftype, "status": status}
-    if status == "done" and BBB_URL:
-        suffix = {
-            "srt":      f"{file_id}.srt",
-            "txt":      f"{file_id}.txt",
-            "summary":  f"{file_id}_summary.txt",
-            "chat":     f"{file_id}_chat.txt",
-            "speakers": f"{file_id}_speakers.txt",
-        }.get(ftype)
-        if suffix:
-            body["script"] = f"{BBB_URL}/{suffix}"
-    if error:
-        body["error"] = error
+    suffix = {
+        "srt":      f"{file_id}.srt",
+        "txt":      f"{file_id}.txt",
+        "summary":  f"{file_id}_summary.txt",
+        "chat":     f"{file_id}_chat.txt",
+        "speakers": f"{file_id}_speakers.txt",
+    }.get(ftype)
+
+    body = {
+        "file_id": file_id,
+        "type": ftype,
+        "status": status,
+        "script": (
+            f"{BBB_URL}/{suffix}" if status == "done" and BBB_URL and suffix else None
+        ),
+        "error": error,
+    }
     channel.basic_publish(
         exchange="",
         routing_key=RESULT_QUEUE,
@@ -133,9 +137,6 @@ def spawn_worker(connection, channel, method, body: bytes):
         log(f"ACK tag={tag}")
         enqueue(lambda ch=channel: ch.basic_ack(tag))
 
-    def nack(requeue=True):
-        log(f"NACK tag={tag} requeue={requeue}")
-        enqueue(lambda ch=channel: ch.basic_nack(tag, requeue=requeue))
 
     # ── 1. parse payload ────────────────────────────────────────────
     try:
@@ -143,7 +144,7 @@ def spawn_worker(connection, channel, method, body: bytes):
         file_id, url = payload["file_id"], payload["url"]
     except Exception as exc:
         log(f"Bad payload: {exc}")
-        nack(False)
+        ack()
         return
 
     # ── 2. download audio ───────────────────────────────────────────
@@ -156,51 +157,84 @@ def spawn_worker(connection, channel, method, body: bytes):
                     f.write(chunk)
     except Exception as exc:
         log(f"Download failed: {exc}")
-        # queue one “error” message per file type, then requeue job
+        # queue one “error” message per file type and stop processing
         for ft in FILE_TYPES:
             enqueue(notify_op(channel, file_id, ft, "error", "download_failed"))
-        nack(True)
+        ack()
         return
 
-    # ── 3. watchdog (auto-nack after timeout) ───────────────────────
-    timer = threading.Timer(JOB_TIMEOUT, lambda: nack(True))
+    # ── 3. watchdog (auto-ack after timeout) ────────────────────────
+    def on_timeout():
+        log(f"Job {file_id} timed out")
+        for ft in (ft for ft in FILE_TYPES if ft not in processed):
+            enqueue(notify_op(channel, file_id, ft, "error", "timeout"))
+        ack()
+
+    timer = threading.Timer(JOB_TIMEOUT, on_timeout)
     timer.start()
 
     try:
         # ── 4. heavy work (split + whisper or TEST_MODE sleep) ──────
         run_pipeline(audio_tmp, file_id)
 
-        # notify srt + txt first
-        for ft in ("srt", "txt"):
-            enqueue(notify_op(channel, file_id, ft, "done"))
-            processed.add(ft)
+        srt_path = Path(f"/transcripts/scripts/{file_id}.srt")
+        txt_path = Path(f"/transcripts/scripts/{file_id}.txt")
+
+        if not srt_path.exists():
+            enqueue(notify_op(channel, file_id, "srt", "error", "srt_failed"))
+            ack()
+            return
+        enqueue(notify_op(channel, file_id, "srt", "done"))
+        processed.add("srt")
+
+        if not txt_path.exists():
+            enqueue(notify_op(channel, file_id, "txt", "error", "txt_failed"))
+            ack()
+            return
+        enqueue(notify_op(channel, file_id, "txt", "done"))
+        processed.add("txt")
 
         # ── merge speakers + chat ─────────────────────────────────
+        merge_err = None
         try:
             merge_speakers_chat(file_id)
-            enqueue(notify_op(channel, file_id, "speakers", "done"))
-            processed.add("speakers")
+        except Exception as exc_merge:
+            merge_err = exc_merge
+            log(f"Merge failed: {exc_merge}")
+
+        speakers_path = Path(f"/transcripts/scripts/{file_id}_speakers.txt")
+        chat_path = Path(f"/transcripts/scripts/{file_id}_chat.txt")
+
+        if not speakers_path.exists():
+            enqueue(notify_op(channel, file_id, "speakers", "error",
+                             str(merge_err) if merge_err else "speakers_failed"))
+            ack()
+            return
+        enqueue(notify_op(channel, file_id, "speakers", "done"))
+        processed.add("speakers")
+
+        if not chat_path.exists():
+            enqueue(notify_op(channel, file_id, "chat", "error",
+                             str(merge_err) if merge_err else "chat_failed"))
+        else:
             enqueue(notify_op(channel, file_id, "chat", "done"))
             processed.add("chat")
-        except Exception as exc_merge:
-            log(f"Merge failed: {exc_merge}")
-            for ft in ("speakers", "chat", "summary"):
-                enqueue(notify_op(channel, file_id, ft, "error", str(exc_merge)))
-                processed.add(ft)
-            ack()
-            return
 
         # ── GPT summary ───────────────────────────────────────────
+        sum_err = None
         try:
             generate_summary(file_id)
+        except Exception as exc_sum:
+            sum_err = exc_sum
+            log(f"Summary failed: {exc_sum}")
+
+        summary_path = Path(f"/transcripts/scripts/{file_id}_summary.txt")
+        if not summary_path.exists():
+            enqueue(notify_op(channel, file_id, "summary", "error",
+                             str(sum_err) if sum_err else "summary_failed"))
+        else:
             enqueue(notify_op(channel, file_id, "summary", "done"))
             processed.add("summary")
-        except Exception as exc_sum:
-            log(f"Summary failed: {exc_sum}")
-            enqueue(notify_op(channel, file_id, "summary", "error", str(exc_sum)))
-            processed.add("summary")
-            ack()
-            return
 
         ack()
 
@@ -209,7 +243,7 @@ def spawn_worker(connection, channel, method, body: bytes):
         # send “error” for anything not already marked done
         for ft in (ft for ft in FILE_TYPES if ft not in processed):
             enqueue(notify_op(channel, file_id, ft, "error", str(exc)))
-        nack(True)
+        ack()
 
     finally:
         timer.cancel()
