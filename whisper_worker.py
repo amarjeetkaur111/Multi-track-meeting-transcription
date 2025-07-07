@@ -314,7 +314,7 @@ def main():
         parameters=PARAMS,
         on_open_callback=on_connection_open,
         on_open_error_callback=lambda c,e: log(f"Conn open error: {e}"),
-        on_close_callback=lambda c,rc,txt: log(f"Conn closed: {rc} {txt}")
+        on_close_callback=lambda c,reason: log(f"Conn closed: {reason}")
     )
     try:
         conn.ioloop.start()
