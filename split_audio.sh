@@ -1,6 +1,6 @@
 #!/bin/bash
 
-exec >> /app/logs/split.log 2>&1
+exec >> /logs/split.log 2>&1
 
 if ! command -v ffmpeg &> /dev/null
 then

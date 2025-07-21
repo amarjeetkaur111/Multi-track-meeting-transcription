@@ -90,7 +90,7 @@ def run_pipeline(audio_path, file_id):
         return
 
     # real path: split then process_audio.py
-    with open("/app/logs/split.log", "a") as split_log:
+    with open("/logs/split.log", "a") as split_log:
         rc = subprocess.run(
             ["/app/split_audio.sh", audio_path],
             stdout=split_log,

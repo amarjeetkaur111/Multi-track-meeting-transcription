@@ -16,8 +16,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     bc \
     git \
-    supervisor \
-    net-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
@@ -47,8 +45,7 @@ RUN pip install --no-cache-dir openai>=1.14 faster-whisper
 RUN pip install --upgrade pysrt tiktoken python-dotenv
 
 # Ensure necessary directories exist inside the container
-RUN mkdir -p /app/queue /app/scripts
+RUN mkdir -p /app/queue /app/scripts /logs
 
-COPY ./supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf", "-n"]
+CMD ["python3", "/app/whisper_worker.py"]
 

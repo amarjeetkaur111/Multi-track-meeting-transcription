@@ -29,14 +29,13 @@ services:
       - /raw:/raw
       - .:/app
       - /var/run/docker.sock:/var/run/docker.sock # Mount Docker socket
-      - ./supervisord.conf:/etc/supervisor/conf.d/supervisord.conf
       - type: bind
-        source: ./supervisor-logs
-        target: /app/logs
+        source: ./logs
+        target: /logs
     env_file:
       - .env
     stdin_open: true
     tty: true
     restart: always
-    command: sh -c "rm -rf /app/*.log && supervisord -c /etc/supervisor/conf.d/supervisord.conf -n"
+#    command: sh -c "rm -rf /logs/*.log && python3 /app/whisper_worker.py > /logs/whisper.log 2>&1"
 

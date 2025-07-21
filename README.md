@@ -25,11 +25,8 @@ This repository provides Docker configuration and scripts for running a Whisper 
     `WHISPER_COMPUTE_TYPE` controls whether the model is converted to `float16` when supported (defaults to `float16`).
 
 ## Logs
-- Application logs are written to `./supervisor-logs`.
+- Application logs are written to `./logs`.
 - `whisper.log` – worker output
-- `gpu_watchdog.log` – GPU availability monitoring
-
-## GPU Watchdog
-The `gpu_watchdog.sh` script checks for GPU availability. If the GPU is unavailable for a configured number of retries, the script will restart the container using Docker to recover automatically.
+- `split.log` – audio splitting details
 
 
