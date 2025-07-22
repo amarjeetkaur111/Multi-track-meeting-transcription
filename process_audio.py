@@ -14,6 +14,18 @@ load_dotenv()
 
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
 
+# Abort if CUDA was requested but is not available
+if WHISPER_DEVICE == "cuda":
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            log("CUDA device requested but not available – exiting")
+            sys.exit(1)
+    except Exception as e:
+        log(f"CUDA check failed: {e}")
+        sys.exit(1)
+
+
 try:
     import whisper
 except ImportError:
@@ -24,17 +36,21 @@ log("Using openai-whisper backend")
 log("Loading Whisper model")
 
 model_size = os.getenv("WHISPER_MODEL", "turbo")
-model = whisper.load_model(
-    model_size,
-    device=WHISPER_DEVICE,
-    download_root="/root/.cache/whisper",
-)
+try:
+    model = whisper.load_model(
+        model_size,
+        device=WHISPER_DEVICE,
+        download_root="/root/.cache/whisper",
+    )
+except Exception as e:
+    log(f"Failed to load Whisper model: {e}")
+    sys.exit(1)
 
 
 
 if len(sys.argv) < 2:
     print("Usage: python process_audio.py <audio_file>")
-    sys.exit(1)
+    sys.exit(5)
     
 
 # Ensure /transcripts/scripts/ exists before copying final files
@@ -79,7 +95,7 @@ def transcribe_chunk(chunk_name: str):
 
     try:
         result = model.transcribe(chunk_path)
-    except RuntimeError as e:
+    except Exception as e:
         log(f"Skipping corrupt chunk {chunk_name}: {e}")
         return None
 

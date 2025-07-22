@@ -6,13 +6,32 @@
 #  * Per-file notifications (srt, txt, summary, chat, speakers)
 #  * TEST_MODE=1  -> just sleep(120) and emit fake files
 # ------------------------------------------------------------
-import os, json, threading, subprocess, shutil, time
+import os, json, threading, subprocess, shutil, time, sys
 from pathlib import Path
 import pika, requests
 from dotenv import load_dotenv
 from logger import log
 
 load_dotenv()
+
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
+
+# Abort early if CUDA requested but unavailable
+if WHISPER_DEVICE == "cuda":
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            log("CUDA device requested but not available – exiting")
+            sys.exit(1)
+    except Exception as e:
+        log(f"CUDA check failed: {e}")
+        sys.exit(1)
+
+try:
+    import whisper  # validate package availability
+except ImportError:
+    log("openai-whisper package not available")
+    sys.exit(1)
 
 # ─────────── ENV / RabbitMQ ───────────
 RABBIT_HOST     = os.getenv("RABBITMQ_HOST", "localhost")
@@ -97,7 +116,7 @@ def run_pipeline(audio_path, file_id):
             stderr=subprocess.STDOUT,
         ).returncode
     if rc != 0:
-        raise RuntimeError("split_audio.sh failed")
+        raise RuntimeError(f"split_audio.sh failed {rc}")
     rc = subprocess.run(["python3", "/app/process_audio.py", audio_path]).returncode
     if rc == 2:
         raise RuntimeError("no_audio")
@@ -105,6 +124,11 @@ def run_pipeline(audio_path, file_id):
         raise RuntimeError("no_srt")
     if rc == 4:
         raise RuntimeError("merge_transcripts_failed")
+    if rc == 5:
+        raise RuntimeError("invalid_audio")
+    if rc == 1:
+        log("process_audio reported critical failure (CUDA NOT FOUND) – exiting worker")
+        os._exit(1)
     if rc != 0:
         raise RuntimeError(f"process_audio.py exited {rc}")
 
@@ -262,6 +286,7 @@ def spawn_worker(connection, channel, method, body: bytes):
             "file_too_small": "File too small for summarization",
             "gpt_summary_failed": "Summary generation failed",
             "transcript_not_found": "Transcript not found",
+            "invalid_audio": "Invalid or corrupt audio file",
         }
         msg = err_map.get(str(exc), str(exc))
         log(f"Job {file_id} failed: {msg}")
