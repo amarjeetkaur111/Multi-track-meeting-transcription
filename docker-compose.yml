@@ -37,5 +37,5 @@ services:
     stdin_open: true
     tty: true
     restart: always
-#    command: sh -c "rm -rf /logs/*.log && python3 /app/whisper_worker.py > /logs/whisper.log 2>&1"
+    command: sh -c "rm -rf /logs/*.log && python3 /app/whisper_worker.py > /logs/whisper.log 2>&1"
 

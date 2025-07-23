@@ -11,27 +11,12 @@ from pathlib import Path
 import pika, requests
 from dotenv import load_dotenv
 from logger import log
+from whisper_model import get_model, cuda_available
 
 load_dotenv()
 
-WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
-
-# Abort early if CUDA requested but unavailable
-if WHISPER_DEVICE == "cuda":
-    try:
-        import torch
-        if not torch.cuda.is_available():
-            log("CUDA device requested but not available – exiting")
-            sys.exit(1)
-    except Exception as e:
-        log(f"CUDA check failed: {e}")
-        sys.exit(1)
-
-try:
-    import whisper  # validate package availability
-except ImportError:
-    log("openai-whisper package not available")
-    sys.exit(1)
+# Load Whisper model once and keep it in memory
+MODEL = get_model()
 
 # ─────────── ENV / RabbitMQ ───────────
 RABBIT_HOST     = os.getenv("RABBITMQ_HOST", "localhost")
@@ -100,14 +85,6 @@ def notify_file(channel, file_id, ftype, status, error=None):
 
 # ─────────── heavy job (split + Whisper) or dummy sleep ───────────
 def run_pipeline(audio_path, file_id):
-    if TEST_MODE:
-        log("TEST_MODE=1 → sleeping 60 s instead of real processing")
-        time.sleep(60)
-        # create two tiny dummy files so downstream steps see something
-        Path(f"/transcripts/scripts/{file_id}.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nTEST\n")
-        Path(f"/transcripts/scripts/{file_id}.txt").write_text("TEST")
-        return
-
     # real path: split then process_audio.py
     with open("/logs/split.log", "a") as split_log:
         rc = subprocess.run(
@@ -116,21 +93,18 @@ def run_pipeline(audio_path, file_id):
             stderr=subprocess.STDOUT,
         ).returncode
     if rc != 0:
-        raise RuntimeError(f"split_audio.sh failed {rc}")
-    rc = subprocess.run(["python3", "/app/process_audio.py", audio_path]).returncode
-    if rc == 2:
-        raise RuntimeError("no_audio")
-    if rc == 3:
-        raise RuntimeError("no_srt")
-    if rc == 4:
-        raise RuntimeError("merge_transcripts_failed")
-    if rc == 5:
-        raise RuntimeError("invalid_audio")
-    if rc == 1:
-        log("process_audio reported critical failure (CUDA NOT FOUND) – exiting worker")
+        raise RuntimeError(f"split_audio.sh failed")
+    try:
+        from process_audio import process_file
+        process_file(audio_path, MODEL)
+    # --- treat CUDA‑level problems as fatal ---
+    except (CudaError, OutOfMemoryError, torch.cuda.CudaError) as fatal:
+        log(f"Fatal CUDA error: {fatal}; exiting so the container restarts")
         os._exit(1)
-    if rc != 0:
-        raise RuntimeError(f"process_audio.py exited {rc}")
+
+    # --- treat expected per‑file issues as non‑fatal ---
+    except RuntimeError as exc:
+        raise RuntimeError(str(exc))
 
 def merge_speakers_chat(file_id: str) -> None:
     """Run merge_speakers.py to add speaker labels and extract chat."""
@@ -177,7 +151,6 @@ def spawn_worker(connection, channel, method, body: bytes):
         log(f"ACK tag={tag}")
         enqueue(lambda ch=channel: ch.basic_ack(tag))
 
-
     # ── 1. parse payload ────────────────────────────────────────────
     try:
         payload = json.loads(body)
@@ -186,6 +159,10 @@ def spawn_worker(connection, channel, method, body: bytes):
         log(f"Bad payload: {exc}")
         ack()
         return
+
+    if not cuda_available():
+        log("CUDA device not available – exiting")
+        os._exit(1)
 
     # ── 2. download audio ───────────────────────────────────────────
     audio_tmp = f"/app/queue/{file_id}.ogg"
