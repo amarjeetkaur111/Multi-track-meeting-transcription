@@ -9,6 +9,7 @@
 import os, json, threading, subprocess
 from pathlib import Path
 import pika, requests
+import sys
 from dotenv import load_dotenv
 from logger import log
 from whisper_model import get_model, cuda_available
@@ -46,6 +47,16 @@ PARAMS = pika.ConnectionParameters(
 )
 
 FILE_TYPES = ["srt", "txt"]
+
+# ─────────── RabbitMQ connection check ───────────
+def ensure_rabbitmq():
+    """Exit the process if RabbitMQ is unreachable."""
+    try:
+        test = pika.BlockingConnection(PARAMS)
+        test.close()
+    except Exception as exc:
+        log(f"RabbitMQ connection failed: {exc}")
+        sys.exit(1)
 
 # ─────────── heartbeat logger ───────────
 def schedule_hb_log(conn, chan):
@@ -243,16 +254,29 @@ def on_channel_open(channel):
 def on_connection_open(conn):
     conn.channel(on_open_callback=on_channel_open)
 
+def on_connection_open_error(conn, exc):
+    log(f"Conn open error: {exc}")
+    sys.exit(1)
+
+def on_connection_closed(conn, reason):
+    log(f"Conn closed: {reason}")
+    sys.exit(1)
+
 # ─────────── main ───────────
 def main():
     log(f"Connect {RABBIT_HOST}:{RABBIT_PORT} HB={HEARTBEAT}s "
         f"TEST_MODE={TEST_MODE}")
-    conn = pika.SelectConnection(
-        parameters=PARAMS,
-        on_open_callback=on_connection_open,
-        on_open_error_callback=lambda c,e: log(f"Conn open error: {e}"),
-        on_close_callback=lambda c,reason: log(f"Conn closed: {reason}")
-    )
+    ensure_rabbitmq()
+    try:
+        conn = pika.SelectConnection(
+            parameters=PARAMS,
+            on_open_callback=on_connection_open,
+            on_open_error_callback=on_connection_open_error,
+            on_close_callback=on_connection_closed
+        )
+    except Exception as exc:
+        log(f"Failed to start SelectConnection: {exc}")
+        sys.exit(1)
     try:
         conn.ioloop.start()
     except KeyboardInterrupt:
