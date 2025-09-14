@@ -8,9 +8,11 @@
 # ------------------------------------------------------------
 import os, json, threading, subprocess
 from pathlib import Path
-import pika, requests
 import sys
+
+import pika, requests, torch
 from dotenv import load_dotenv
+
 from logger import log
 from whisper_model import get_model, cuda_available
 
@@ -113,7 +115,7 @@ def run_pipeline(audio_path, file_id):
         from process_audio import process_file
         process_file(audio_path, MODEL)
     # --- treat CUDA‑level problems as fatal ---
-    except (CudaError, OutOfMemoryError, torch.cuda.CudaError) as fatal:
+    except (torch.cuda.CudaError, torch.cuda.OutOfMemoryError) as fatal:
         log(f"Fatal CUDA error: {fatal}; exiting so the container restarts")
         os._exit(1)
 
