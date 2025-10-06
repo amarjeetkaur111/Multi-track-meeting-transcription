@@ -21,8 +21,10 @@ This repository provides Docker configuration and scripts for running a Whisper 
     Each job message must include a `file_id` field and an audio `url`.
   The `WHISPER_MODEL` variable selects which Whisper model to load (defaults to `large-v3`).
     `WHISPER_BATCH_SIZE` sets the `batch_size` used during transcription (defaults to `16`).
-    `WHISPER_DEVICE` chooses the Torch device (defaults to `cuda`) and
-    `WHISPER_COMPUTE_TYPE` controls whether the model is converted to `float16` when supported (defaults to `float16`).
+    `WHISPER_DEVICE` chooses the Torch device (defaults to automatically using the
+    CUDA GPU with the most free memory) and `WHISPER_COMPUTE_TYPE` controls
+    whether the model is converted to `float16` when supported (defaults to
+    `float16`).
 
 ## Logs
 - Application logs are written to `./logs`.
