@@ -8,12 +8,21 @@ then
     exit 1
 fi
 
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <audio_file>"
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+    echo "Usage: $0 <audio_file> [start_offset_ms]"
     exit 1
 fi
 
 input_file="$1"
+start_offset_ms="${2:-0}"
+
+if ! [[ "$start_offset_ms" =~ ^-?[0-9]+$ ]]; then
+    echo "start_offset_ms must be an integer number of milliseconds"
+    exit 1
+fi
+
+start_offset_ms=$((start_offset_ms))
+
 base_name="$(basename -- "$input_file" .${input_file##*.})"
 output_dir="/app/chunks/${base_name}"  # Updated chunk storage location
 rm -rf "$output_dir"
@@ -83,7 +92,8 @@ split_file_parts() {
     local chunk_num=1
     for ct in "${cut_times[@]}" "$duration"; do
         local part_dur=$(echo "$ct - $start" | bc -l)
-        local out_start_ms=$(echo "$start_ms + ($start * 1000)" | bc | cut -d'.' -f1)
+        local out_start_ms=$(awk "BEGIN { printf \"%0.f\", $start_ms + ($start * 1000) }")
+        out_start_ms=$((out_start_ms + start_offset_ms))
         local out_file="$dir/${out_start_ms}_${idx}_${chunk_num}.ogg"
         ffmpeg -y -i "$file" -ss "$start" -t "$part_dur" -c:a libvorbis "$out_file" >/dev/null 2>&1
         start=$ct
@@ -123,8 +133,9 @@ for (( i=0; i<num_silence; i+=2 )); do
     silence_end=${silence_times[i+1]}
     duration=$(echo "$silence_start - $start_time" | bc)
 
-    start_time_us=$(echo "$start_time * 1000" | bc | cut -d'.' -f1)  # Convert to milliseconds
-    output_file="$output_dir/${start_time_us}_${chunk_index}.ogg"  # Correct file naming
+    start_time_us=$(awk "BEGIN { printf \"%0.f\", $start_time * 1000 }")  # Convert to milliseconds
+    abs_start_ms=$((start_time_us + start_offset_ms))
+    output_file="$output_dir/${abs_start_ms}_${chunk_index}.ogg"  # Correct file naming
 
     if (( $(echo "$duration > 0" | bc -l) )); then
         ffmpeg -y -i "$input_file" -ss "$start_time" -t "$duration" -c:a libvorbis "$output_file" &
@@ -142,8 +153,9 @@ done
 
 final_duration=$(ffmpeg -i "$input_file" 2>&1 | grep "Duration" | awk '{print $2}' | tr -d , | awk -F: '{ print ($1 * 3600) + ($2 * 60) + $3 }')
 remaining_duration=$(echo "$final_duration - $start_time" | bc)
-start_time_us=$(echo "$start_time * 1000" | bc | cut -d'.' -f1)
-output_file="$output_dir/${start_time_us}_${chunk_index}.ogg"
+start_time_us=$(awk "BEGIN { printf \"%0.f\", $start_time * 1000 }")
+abs_start_ms=$((start_time_us + start_offset_ms))
+output_file="$output_dir/${abs_start_ms}_${chunk_index}.ogg"
 
 if (( $(echo "$remaining_duration > 0" | bc -l) )); then
     ffmpeg -y -i "$input_file" -ss "$start_time" -c:a libvorbis "$output_file" &

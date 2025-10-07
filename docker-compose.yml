@@ -1,11 +1,11 @@
 version: '3.9'
 
 services:
-  whisper:
+  mp-whisper:
     build:
       context: .
       dockerfile: Dockerfile
-    image: whisper-worker-image
+    image: whisper-speaker-wise-image
     #container_name: whisper-python-worker
     environment:
       RABBITMQ_HOST: ${RABBITMQ_HOST}
@@ -26,7 +26,7 @@ services:
     volumes:
       - ./models:/root/.cache/whisper
       - /transcripts:/transcripts
-      - /raw:/raw
+      - /recordings_server/bigbluebutton/recording/raw:/recordings_server/bigbluebutton/recording/raw
       - .:/app
       - /var/run/docker.sock:/var/run/docker.sock # Mount Docker socket
       - type: bind

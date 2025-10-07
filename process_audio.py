@@ -5,6 +5,9 @@ import datetime
 import shutil
 import re
 from pathlib import Path
+from typing import Optional
+
+import torch
 from dotenv import load_dotenv
 
 from logger import log
@@ -13,24 +16,45 @@ from whisper_model import get_model
 load_dotenv()
 
 
-def process_file(input_file: str, model=None) -> None:
-    """Transcribe *input_file* using Whisper and write output files."""
+def process_file(
+    input_file: str,
+    model=None,
+    *,
+    destination_dir: Optional[Path] = None,
+    final_basename: Optional[str] = None,
+    finalize: bool = True,
+    generate_txt: bool = True,
+) -> Path:
+    """Transcribe *input_file* using Whisper and write output files.
+
+    Returns the path to the generated SRT file.  When *finalize* is False the
+    caller is responsible for copying the results into their final location and
+    no queue bookkeeping files are touched.
+    """
     if model is None:
         model = get_model()
 
     base_name = os.path.splitext(os.path.basename(input_file))[0]
+    final_base = final_basename or base_name
     log(f"Starting processing for {base_name}")
 
     chunk_dir = f"/app/chunks/{base_name}"
-    output_srt = f"/app/scripts/{base_name}.srt"
-    output_txt = f"/app/scripts/{base_name}.txt"
-    queue_file = Path(os.getenv("TRANSCRIPTS_QUEUE", "/transcripts/queue")) / f"{base_name}.txt"
-    done_file = Path(os.getenv("TRANSCRIPTS_DONE", "/transcripts/done")) / f"{base_name}.txt"
-    final_srt_transcripts = Path(os.getenv("TRANSCRIPTS_FOLDER", "/transcripts/scripts")) / f"{base_name}.srt"
-    final_txt_transcripts = Path(os.getenv("TRANSCRIPTS_FOLDER", "/transcripts/scripts")) / f"{base_name}.txt"
+    scripts_dir = Path("/app/scripts")
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    output_srt = scripts_dir / f"{base_name}.srt"
+    output_txt = scripts_dir / f"{base_name}.txt"
 
-    os.makedirs("/transcripts/scripts", exist_ok=True)
-    os.makedirs("/transcripts/done", exist_ok=True)
+    final_dir = Path(destination_dir) if destination_dir else Path(os.getenv("TRANSCRIPTS_FOLDER", "/transcripts/scripts"))
+    final_dir.mkdir(parents=True, exist_ok=True)
+    final_srt_transcripts = final_dir / f"{final_base}.srt"
+    final_txt_transcripts = final_dir / f"{final_base}.txt"
+
+    queue_dir = Path(os.getenv("TRANSCRIPTS_QUEUE", "/transcripts/queue"))
+    done_dir = Path(os.getenv("TRANSCRIPTS_DONE", "/transcripts/done"))
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    done_dir.mkdir(parents=True, exist_ok=True)
+    queue_file = queue_dir / f"{final_base}.txt"
+    done_file = done_dir / f"{final_base}.txt"
 
     def transcribe_chunk(chunk_name: str):
         if not chunk_name.endswith(".ogg"):
@@ -99,7 +123,7 @@ def process_file(input_file: str, model=None) -> None:
     srt_files = sorted(srt_files, key=lambda x: extract_timestamp(os.path.basename(x)))
     log(f"Merging SRT files in order: {srt_files}")
 
-    rc = subprocess.run(["python3", "/app/merge_transcripts.py", *srt_files, output_srt]).returncode
+    rc = subprocess.run(["python3", "/app/merge_transcripts.py", *srt_files, str(output_srt)]).returncode
     if rc != 0:
         log(f"merge_transcripts.py failed with code {rc}")
         raise RuntimeError("merge_transcripts_failed")
@@ -119,19 +143,24 @@ def process_file(input_file: str, model=None) -> None:
         with open(output_file, "w", encoding="utf-8") as file:
             file.write("\n".join(formatted))
 
-    srt_to_custom_text(output_srt, output_txt)
-    log("Converted SRT to TXT")
+    if generate_txt:
+        srt_to_custom_text(output_srt, output_txt)
+        log("Converted SRT to TXT")
 
     shutil.copy(output_srt, final_srt_transcripts)
-    shutil.copy(output_txt, final_txt_transcripts)
-    log("Copied transcripts to final directory")
+    log(f"Copied SRT to {final_srt_transcripts}")
 
-    if os.path.exists(queue_file):
+    if generate_txt:
+        shutil.copy(output_txt, final_txt_transcripts)
+        log(f"Copied TXT to {final_txt_transcripts}")
+
+    if finalize and queue_file.exists():
         shutil.move(queue_file, done_file)
         log(f"Moved {queue_file} to {done_file}")
 
-    log(f"Final transcript saved to {output_srt}")
-    log(f"Converted text file saved to {output_txt}")
+    log(f"Final transcript saved to {final_srt_transcripts}")
+    if generate_txt:
+        log(f"Converted text file saved to {final_txt_transcripts}")
 
     if os.path.exists(chunk_dir):
         try:
@@ -140,6 +169,8 @@ def process_file(input_file: str, model=None) -> None:
         except Exception as exc:
             log(f"Error removing chunk directory: {exc}")
         subprocess.run(["sync"])
+
+    return final_srt_transcripts
 
 
 if __name__ == "__main__":

@@ -3,14 +3,22 @@
 # ------------------------------------------------------------
 #  * Async SelectConnection (auto heart-beat)
 #  * Background thread for long job
-#  * Per-file notifications (srt, txt)
-#  * TEST_MODE=1  -> just sleep(120) and emit fake files
+#  * Per-meeting processing across microphone tracks
 # ------------------------------------------------------------
-import os, json, threading, subprocess
-from pathlib import Path
+import os
+import json
+import threading
+import subprocess
 import sys
+import re
+import shutil
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-import pika, requests, torch
+import pika
+import torch
 from dotenv import load_dotenv
 
 from logger import log
@@ -48,7 +56,93 @@ PARAMS = pika.ConnectionParameters(
     blocked_connection_timeout = HEARTBEAT * 2,
 )
 
-FILE_TYPES = ["srt", "txt"]
+FILE_TYPES = ["srt"]
+RECORDINGS_ROOT = Path(os.getenv("RECORDINGS_ROOT", "/recordings"))
+
+# ─────────── Metadata helpers ───────────
+
+MICROPHONE_PATTERN = re.compile(r"microphone-(?P<user>[^-]+)-.*-(?P<ts>\d+)\.webm$", re.IGNORECASE)
+
+
+@dataclass
+class Participant:
+    name: str
+    join_ts: Optional[int]
+
+
+def _safe_int(value: Optional[str]) -> Optional[int]:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def load_meeting_metadata(meeting_dir: Path) -> tuple[Optional[int], Dict[str, Participant]]:
+    events_path = meeting_dir / "events.xml"
+    participants: Dict[str, Participant] = {}
+    recording_start: Optional[int] = None
+
+    if not events_path.exists():
+        log(f"events.xml not found in {meeting_dir}; offsets will default to 0")
+        return recording_start, participants
+
+    try:
+        tree = ET.parse(events_path)
+        root = tree.getroot()
+    except ET.ParseError as exc:
+        log(f"Failed to parse {events_path}: {exc}")
+        return recording_start, participants
+
+    for event in root.findall("event"):
+        event_name = event.attrib.get("eventname")
+        module = event.attrib.get("module")
+        timestamp_utc = _safe_int(event.findtext("timestampUTC"))
+
+        if event_name == "RecordStatusEvent" and event.findtext("status") == "true":
+            if timestamp_utc is not None:
+                if recording_start is None or timestamp_utc < recording_start:
+                    recording_start = timestamp_utc
+            continue
+
+        if module == "PARTICIPANT" and event_name == "ParticipantJoinEvent":
+            user_id = event.findtext("userId") or event.findtext("participant")
+            if not user_id:
+                continue
+            name = event.findtext("name") or user_id
+            participants[user_id] = Participant(name=name, join_ts=timestamp_utc)
+
+    participants_summary = ", ".join(
+        f"{user}:{info.join_ts}"
+        for user, info in participants.items()
+    ) or "<none>"
+    log(
+        f"Parsed metadata for meeting – recording_start={recording_start}, "
+        f"participants={participants_summary}"
+    )
+    return recording_start, participants
+
+
+def parse_microphone_file(path: Path) -> tuple[Optional[str], Optional[int]]:
+    match = MICROPHONE_PATTERN.match(path.name)
+    if not match:
+        return None, None
+    user = match.group("user")
+    ts = _safe_int(match.group("ts"))
+    return user, ts
+
+
+def compute_track_offset(
+    recording_start: Optional[int],
+    join_ts: Optional[int],
+    track_timestamp: Optional[int],
+) -> int:
+    if recording_start is None:
+        return max(join_ts or track_timestamp or 0, 0)
+
+    anchor = join_ts or track_timestamp or recording_start
+    offset = anchor - recording_start
+    return offset if offset >= 0 else 0
+
 
 # ─────────── RabbitMQ connection check ───────────
 def ensure_rabbitmq():
@@ -70,10 +164,10 @@ def schedule_hb_log(conn, chan):
 
 # ─────────── RESULT_QUEUE notifier ───────────
 def notify_file(channel, file_id, ftype, status, error=None):
-    suffix = {
+    suffix_map = {
         "srt": f"{file_id}.srt",
-        "txt": f"{file_id}.txt",
-    }.get(ftype)
+    }
+    suffix = suffix_map.get(ftype)
 
     content = None
     if status == "done" and suffix:
@@ -101,27 +195,91 @@ def notify_file(channel, file_id, ftype, status, error=None):
     log(f"[notify] {file_id} {ftype} → {status}")
 
 # ─────────── heavy job (split + Whisper) or dummy sleep ───────────
-def run_pipeline(audio_path, file_id):
-    # real path: split then process_audio.py
-    with open("/logs/split.log", "a") as split_log:
-        rc = subprocess.run(
-            ["/app/split_audio.sh", audio_path],
-            stdout=split_log,
-            stderr=subprocess.STDOUT,
-        ).returncode
-    if rc != 0:
-        raise RuntimeError(f"split_audio.sh failed")
-    try:
-        from process_audio import process_file
-        process_file(audio_path, MODEL)
-    # --- treat CUDA‑level problems as fatal ---
-    except (torch.cuda.CudaError, torch.cuda.OutOfMemoryError) as fatal:
-        log(f"Fatal CUDA error: {fatal}; exiting so the container restarts")
-        os._exit(1)
+def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
+    """Transcribe every microphone track for *meeting_id* and merge the SRTs."""
 
-    # --- treat expected per‑file issues as non‑fatal ---
+    audio_dir = meeting_dir / "audio"
+    if not audio_dir.exists() or not audio_dir.is_dir():
+        log(f"Audio directory not found for meeting {meeting_id}: {audio_dir}")
+        raise RuntimeError("no_audio")
+
+    microphone_paths = sorted(audio_dir.glob("microphone-*.webm"))
+    if not microphone_paths:
+        log(f"No microphone recordings discovered under {audio_dir}")
+        raise RuntimeError("no_audio")
+
+    recording_start, participants = load_meeting_metadata(meeting_dir)
+    staging_dir = Path("/app/staging") / meeting_id
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    from process_audio import process_file
+    from merge_transcripts import merge_absolute_srts
+
+    per_track_srts: List[Tuple[str, Optional[str]]] = []
+
+    for mic_path in microphone_paths:
+        user_id, track_ts = parse_microphone_file(mic_path)
+        if not user_id:
+            log(f"Skipping unrecognised microphone file name: {mic_path.name}")
+            continue
+
+        participant = participants.get(user_id)
+        speaker_name = participant.name if participant else user_id
+        join_ts = participant.join_ts if participant else None
+        offset_ms = compute_track_offset(recording_start, join_ts, track_ts)
+
+        log(
+            f"Processing track {mic_path.name}: speaker={speaker_name}, "
+            f"join_ts={join_ts}, track_ts={track_ts}, offset={offset_ms}"
+        )
+
+        with open("/logs/split.log", "a") as split_log:
+            rc = subprocess.run(
+                ["/app/split_audio.sh", str(mic_path), str(offset_ms)],
+                stdout=split_log,
+                stderr=subprocess.STDOUT,
+            ).returncode
+        if rc != 0:
+            raise RuntimeError(f"split_failed:{mic_path.name}")
+
+        try:
+            srt_path = process_file(
+                str(mic_path),
+                MODEL,
+                destination_dir=staging_dir,
+                final_basename=mic_path.stem,
+                finalize=False,
+                generate_txt=False,
+            )
+        except (torch.cuda.CudaError, torch.cuda.OutOfMemoryError) as fatal:
+            log(f"Fatal CUDA error: {fatal}; exiting so the container restarts")
+            os._exit(1)
+        except RuntimeError as exc:
+            raise RuntimeError(str(exc))
+
+        per_track_srts.append((str(srt_path), speaker_name))
+
+    if not per_track_srts:
+        raise RuntimeError("no_srt")
+
+    transcripts_dir = Path("/app/scripts")
+    transcripts_dir.mkdir(parents=True, exist_ok=True)
+    final_srt_path = transcripts_dir / f"{meeting_id}.srt"
+
+    try:
+        merge_absolute_srts(per_track_srts, str(final_srt_path))
     except RuntimeError as exc:
         raise RuntimeError(str(exc))
+
+    log(f"Merged {len(per_track_srts)} track transcripts into {final_srt_path}")
+
+    # try:
+    #     shutil.rmtree(staging_dir)
+    #     log(f"Removed staging directory {staging_dir}")
+    # except OSError:
+    #     pass
+
+    return final_srt_path
 
 def notify_op(channel, file_id: str, ftype: str,
               status: str, error: str | None = None):
@@ -147,7 +305,7 @@ def spawn_worker(connection, channel, method, body: bytes):
     # ── 1. parse payload ────────────────────────────────────────────
     try:
         payload = json.loads(body)
-        file_id, url = payload["file_id"], payload["url"]
+        file_id = payload["file_id"]
     except Exception as exc:
         log(f"Bad payload: {exc}")
         ack()
@@ -157,19 +315,10 @@ def spawn_worker(connection, channel, method, body: bytes):
         log("CUDA device not available – exiting")
         os._exit(1)
 
-    # ── 2. download audio ───────────────────────────────────────────
-    audio_tmp = f"/app/queue/{file_id}.ogg"
-    try:
-        with requests.get(url, stream=True, timeout=60) as r:
-            r.raise_for_status()
-            with open(audio_tmp, "wb") as f:
-                for chunk in r.iter_content(8192):
-                    f.write(chunk)
-    except Exception as exc:
-        log(f"Download failed: {exc}")
-        # queue one “error” message per file type and stop processing
-        # only notify failure for the first expected file (srt)
-        enqueue(notify_op(channel, file_id, "srt", "error", "download_failed"))
+    meeting_dir = RECORDINGS_ROOT / file_id
+    if not meeting_dir.exists() or not meeting_dir.is_dir():
+        log(f"Meeting directory not found: {meeting_dir}")
+        enqueue(notify_op(channel, file_id, "srt", "error", "meeting_not_found"))
         ack()
         return
 
@@ -185,35 +334,32 @@ def spawn_worker(connection, channel, method, body: bytes):
 
     try:
         # ── 4. heavy work (split + whisper or TEST_MODE sleep) ──────
-        run_pipeline(audio_tmp, file_id)
+        final_srt_path = run_pipeline(meeting_dir, file_id)
 
-        srt_path = Path(f"/transcripts/scripts/{file_id}.srt")
-        txt_path = Path(f"/transcripts/scripts/{file_id}.txt")
-
-        if not srt_path.exists():
+        if not final_srt_path.exists():
             enqueue(notify_op(channel, file_id, "srt", "error", "srt_failed"))
             ack()
             return
         enqueue(notify_op(channel, file_id, "srt", "done"))
         processed.add("srt")
 
-        if not txt_path.exists():
-            enqueue(notify_op(channel, file_id, "txt", "error", "txt_failed"))
-            ack()
-            return
-        enqueue(notify_op(channel, file_id, "txt", "done"))
-        processed.add("txt")
-
         ack()
 
     except Exception as exc:
         err_map = {
-            "no_audio": "No Audio in meeting",
-            "no_srt": "No srt file for the meeting",
+            "no_audio": "No microphone recordings found",
+            "no_srt": "No transcripts generated",
             "merge_transcripts_failed": "Could not merge transcripts",
             "invalid_audio": "Invalid or corrupt audio file",
+            "meeting_not_found": "Meeting recordings directory missing",
+            "no_subtitles": "No subtitles available to merge",
         }
-        msg = err_map.get(str(exc), str(exc))
+        exc_key = str(exc)
+        if exc_key.startswith("split_failed:"):
+            failed_track = exc_key.split(":", 1)[1]
+            msg = f"Audio split failed for {failed_track}"
+        else:
+            msg = err_map.get(exc_key, exc_key)
         log(f"Job {file_id} failed: {msg}")
         # notify failure only for the next expected file type
         def first_missing(done: set[str]):
@@ -229,10 +375,6 @@ def spawn_worker(connection, channel, method, body: bytes):
 
     finally:
         timer.cancel()
-        try:
-            Path(audio_tmp).unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 # ─────────── SelectConnection callbacks ───────────
