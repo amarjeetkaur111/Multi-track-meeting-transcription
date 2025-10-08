@@ -12,7 +12,6 @@ import threading
 import subprocess
 import sys
 import re
-import shutil
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass
@@ -502,10 +501,8 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
         raise RuntimeError("no_audio")
 
     timeline, participants, talk_windows = load_meeting_metadata(meeting_dir)
-    staging_dir = Path("/app/staging") / meeting_id
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    debug_dir = staging_dir / "alignment_debug"
-    debug_dir.mkdir(parents=True, exist_ok=True)
+    meeting_scripts_dir = Path("/app/scripts") / meeting_id
+    meeting_scripts_dir.mkdir(parents=True, exist_ok=True)
 
     from process_audio import process_file
     from merge_transcripts import merge_absolute_srts
@@ -542,10 +539,11 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
             srt_path = process_file(
                 str(mic_path),
                 MODEL,
-                destination_dir=staging_dir,
+                destination_dir=meeting_scripts_dir,
                 final_basename=mic_path.stem,
                 finalize=False,
                 generate_txt=False,
+                intermediate_dir=meeting_scripts_dir,
             )
         except (torch.cuda.CudaError, torch.cuda.OutOfMemoryError) as fatal:
             log(f"Fatal CUDA error: {fatal}; exiting so the container restarts")
@@ -555,30 +553,12 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
 
         srt_path_obj = Path(srt_path)
 
-        pre_align_copy = debug_dir / f"{srt_path_obj.stem}_before_alignment.srt"
-        try:
-            shutil.copyfile(srt_path_obj, pre_align_copy)
-            log(f"Saved pre-alignment copy {pre_align_copy}")
-        except OSError as exc:
-            log(f"Failed to save pre-alignment SRT for {srt_path_obj.name}: {exc}")
-
-        adjust_track_srt(srt_path_obj, timing)
-
-        post_align_copy = debug_dir / f"{srt_path_obj.stem}_after_alignment.srt"
-        try:
-            shutil.copyfile(srt_path_obj, post_align_copy)
-            log(f"Saved post-alignment copy {post_align_copy}")
-        except OSError as exc:
-            log(f"Failed to save post-alignment SRT for {srt_path_obj.name}: {exc}")
-
         per_track_srts.append((str(srt_path_obj), speaker_name))
 
     if not per_track_srts:
         raise RuntimeError("no_srt")
 
-    transcripts_dir = Path("/app/scripts")
-    transcripts_dir.mkdir(parents=True, exist_ok=True)
-    final_srt_path = transcripts_dir / f"{meeting_id}.srt"
+    final_srt_path = meeting_scripts_dir / f"{meeting_id}.srt"
 
     try:
         merge_absolute_srts(per_track_srts, str(final_srt_path))
@@ -586,12 +566,6 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
         raise RuntimeError(str(exc))
 
     log(f"Merged {len(per_track_srts)} track transcripts into {final_srt_path}")
-
-    # try:
-    #     shutil.rmtree(staging_dir)
-    #     log(f"Removed staging directory {staging_dir}")
-    # except OSError:
-    #     pass
 
     return final_srt_path
 

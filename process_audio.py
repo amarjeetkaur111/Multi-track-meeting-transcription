@@ -24,12 +24,15 @@ def process_file(
     final_basename: Optional[str] = None,
     finalize: bool = True,
     generate_txt: bool = True,
+    intermediate_dir: Optional[Path] = None,
 ) -> Path:
     """Transcribe *input_file* using Whisper and write output files.
 
     Returns the path to the generated SRT file.  When *finalize* is False the
     caller is responsible for copying the results into their final location and
-    no queue bookkeeping files are touched.
+    no queue bookkeeping files are touched.  ``intermediate_dir`` allows the
+    caller to control where temporary Whisper outputs (``.srt``/``.txt``) are
+    written before any optional copy to ``destination_dir`` occurs.
     """
     if model is None:
         model = get_model()
@@ -39,7 +42,7 @@ def process_file(
     log(f"Starting processing for {base_name}")
 
     chunk_dir = f"/app/chunks/{base_name}"
-    scripts_dir = Path("/app/scripts")
+    scripts_dir = Path(intermediate_dir) if intermediate_dir else Path("/app/scripts")
     scripts_dir.mkdir(parents=True, exist_ok=True)
     output_srt = scripts_dir / f"{base_name}.srt"
     output_txt = scripts_dir / f"{base_name}.txt"
@@ -56,6 +59,29 @@ def process_file(
     queue_file = queue_dir / f"{final_base}.txt"
     done_file = done_dir / f"{final_base}.txt"
 
+    PAUSE_THRESHOLD = 1.2  # seconds of silence to trigger a new subtitle line
+    MAX_SEGMENT_DURATION = 8.0  # seconds; split very long ranges even without silence
+
+    def flush_segment(subs, index_counter, start_seconds, end_seconds, words):
+        if not words:
+            return index_counter
+        text = "".join(words).strip()
+        if not text:
+            return index_counter
+        if start_seconds is None or end_seconds is None:
+            return index_counter
+        if end_seconds <= start_seconds:
+            return index_counter
+        subs.append(
+            srt.Subtitle(
+                index=index_counter,
+                start=datetime.timedelta(seconds=start_seconds),
+                end=datetime.timedelta(seconds=end_seconds),
+                content=text,
+            )
+        )
+        return index_counter + 1
+
     def transcribe_chunk(chunk_name: str):
         if not chunk_name.endswith(".ogg"):
             return None
@@ -69,7 +95,7 @@ def process_file(
             return None
 
         try:
-            result = model.transcribe(chunk_path)
+            result = model.transcribe(chunk_path, word_timestamps=True)
         # ── differentiate fatal GPU errors from ordinary per‑chunk issues ──
         except (torch.cuda.CudaError,
                 torch.cuda.OutOfMemoryError) as gpu_exc:
@@ -83,18 +109,70 @@ def process_file(
             
         segments = result["segments"]
         subs = []
-        for i, segment in enumerate(segments):
+        next_index = 1
+        for segment in segments:
             if isinstance(segment, dict):
-                start = segment.get("start")
-                end = segment.get("end")
-                text = segment.get("text")
+                seg_start = segment.get("start")
+                seg_end = segment.get("end")
+                seg_text = segment.get("text")
+                seg_words = segment.get("words")
             else:
-                start = getattr(segment, "start")
-                end = getattr(segment, "end")
-                text = getattr(segment, "text")
-            start_time = datetime.timedelta(seconds=start)
-            end_time = datetime.timedelta(seconds=end)
-            subs.append(srt.Subtitle(index=i, start=start_time, end=end_time, content=text))
+                seg_start = getattr(segment, "start")
+                seg_end = getattr(segment, "end")
+                seg_text = getattr(segment, "text")
+                seg_words = getattr(segment, "words", None)
+
+            if seg_words:
+                current_words = []
+                current_start = None
+                last_end = None
+
+                for word in seg_words:
+                    word_start = word.get("start", seg_start)
+                    word_end = word.get("end", word_start)
+                    word_text = word.get("word", "")
+
+                    if current_start is None:
+                        current_start = word_start
+
+                    split_due_to_pause = (
+                        last_end is not None
+                        and word_start - last_end >= PAUSE_THRESHOLD
+                    )
+                    split_due_to_length = (
+                        current_start is not None
+                        and word_end - current_start >= MAX_SEGMENT_DURATION
+                    )
+
+                    if split_due_to_pause or split_due_to_length:
+                        next_index = flush_segment(
+                            subs, next_index, current_start, last_end or word_start, current_words
+                        )
+                        current_words = []
+                        current_start = word_start
+
+                    current_words.append(word_text)
+                    last_end = word_end
+
+                next_index = flush_segment(
+                    subs,
+                    next_index,
+                    current_start if current_start is not None else seg_start,
+                    last_end if last_end is not None else seg_end,
+                    current_words,
+                )
+            else:
+                if not seg_text:
+                    continue
+                subs.append(
+                    srt.Subtitle(
+                        index=next_index,
+                        start=datetime.timedelta(seconds=seg_start),
+                        end=datetime.timedelta(seconds=seg_end),
+                        content=seg_text,
+                    )
+                )
+                next_index += 1
 
         with open(srt_path, "w") as f:
             f.write(srt.compose(subs))
@@ -147,12 +225,18 @@ def process_file(
         srt_to_custom_text(output_srt, output_txt)
         log("Converted SRT to TXT")
 
-    shutil.copy(output_srt, final_srt_transcripts)
-    log(f"Copied SRT to {final_srt_transcripts}")
+    if output_srt.resolve() != final_srt_transcripts.resolve():
+        shutil.copy(output_srt, final_srt_transcripts)
+        log(f"Copied SRT to {final_srt_transcripts}")
+    else:
+        log(f"SRT already located at {final_srt_transcripts}; skipping copy")
 
     if generate_txt:
-        shutil.copy(output_txt, final_txt_transcripts)
-        log(f"Copied TXT to {final_txt_transcripts}")
+        if output_txt.resolve() != final_txt_transcripts.resolve():
+            shutil.copy(output_txt, final_txt_transcripts)
+            log(f"Copied TXT to {final_txt_transcripts}")
+        else:
+            log(f"TXT already located at {final_txt_transcripts}; skipping copy")
 
     if finalize and queue_file.exists():
         shutil.move(queue_file, done_file)
