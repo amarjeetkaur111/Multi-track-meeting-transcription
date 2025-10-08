@@ -5,6 +5,7 @@
 #  * Background thread for long job
 #  * Per-meeting processing across microphone tracks
 # ------------------------------------------------------------
+import datetime
 import os
 import json
 import threading
@@ -13,11 +14,13 @@ import sys
 import re
 import shutil
 import xml.etree.ElementTree as ET
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pika
+import srt
 import torch
 from dotenv import load_dotenv
 
@@ -70,6 +73,70 @@ class Participant:
     join_ts: Optional[int]
 
 
+@dataclass
+class MeetingTimeline:
+    segments: List[Tuple[int, int]]
+    fallback_start: int = 0
+
+    @classmethod
+    def from_segments(
+        cls,
+        segments: List[Tuple[int, int]],
+        fallback_start: int = 0,
+    ) -> "MeetingTimeline":
+        cleaned: List[Tuple[int, int]] = [
+            (int(start), int(end))
+            for start, end in segments
+            if start is not None and end is not None and end >= start
+        ]
+        cleaned.sort(key=lambda pair: pair[0])
+        merged: List[Tuple[int, int]] = []
+        for start, end in cleaned:
+            if not merged:
+                merged.append((start, end))
+                continue
+            last_start, last_end = merged[-1]
+            if start <= last_end:
+                merged[-1] = (last_start, max(last_end, end))
+            else:
+                merged.append((start, end))
+        return cls(segments=merged, fallback_start=fallback_start)
+
+    @property
+    def start_ms(self) -> int:
+        if self.segments:
+            return self.segments[0][0]
+        return self.fallback_start
+
+    def absolute_to_meeting(self, timestamp: Optional[int]) -> int:
+        if timestamp is None:
+            return 0
+        ts = int(timestamp)
+        if not self.segments:
+            base = self.fallback_start
+            return max(0, ts - base)
+        total = 0
+        for start, end in self.segments:
+            if ts < start:
+                return total
+            if ts >= end:
+                total += max(0, end - start)
+                continue
+            return total + max(0, ts - start)
+        last_end = self.segments[-1][1]
+        if ts <= last_end:
+            return total
+        return total + max(0, ts - last_end)
+
+
+@dataclass
+class TrackTiming:
+    anchor_ms: int
+    anchor_meeting_ms: int
+    talk_windows: List[Tuple[int, int]]
+    timeline: "MeetingTimeline"
+
+
 def _safe_int(value: Optional[str]) -> Optional[int]:
     try:
         return int(value) if value is not None else None
@@ -77,31 +144,69 @@ def _safe_int(value: Optional[str]) -> Optional[int]:
         return None
 
 
-def load_meeting_metadata(meeting_dir: Path) -> tuple[Optional[int], Dict[str, Participant]]:
+def load_meeting_metadata(
+    meeting_dir: Path,
+) -> tuple[MeetingTimeline, Dict[str, Participant], Dict[str, List[Tuple[int, int]]]]:
     events_path = meeting_dir / "events.xml"
     participants: Dict[str, Participant] = {}
-    recording_start: Optional[int] = None
+    first_recording_start: Optional[int] = None
+    talk_windows: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+    talking_state: Dict[str, Optional[int]] = {}
+    last_timestamp_utc: Optional[int] = None
+    recording_segments: List[Tuple[int, int]] = []
+    recording_active = False
+    current_record_start: Optional[int] = None
 
     if not events_path.exists():
         log(f"events.xml not found in {meeting_dir}; offsets will default to 0")
-        return recording_start, participants
+        timeline = MeetingTimeline.from_segments([], fallback_start=0)
+        return timeline, participants, {}
 
     try:
         tree = ET.parse(events_path)
         root = tree.getroot()
     except ET.ParseError as exc:
         log(f"Failed to parse {events_path}: {exc}")
-        return recording_start, participants
+        timeline = MeetingTimeline.from_segments([], fallback_start=0)
+        return timeline, participants, {}
 
-    for event in root.findall("event"):
+    def _event_timestamp(event: ET.Element) -> int:
+        value = event.attrib.get("timestamp")
+        try:
+            return int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    events = sorted(root.findall("event"), key=_event_timestamp)
+
+    for event in events:
         event_name = event.attrib.get("eventname")
         module = event.attrib.get("module")
         timestamp_utc = _safe_int(event.findtext("timestampUTC"))
 
-        if event_name == "RecordStatusEvent" and event.findtext("status") == "true":
-            if timestamp_utc is not None:
-                if recording_start is None or timestamp_utc < recording_start:
-                    recording_start = timestamp_utc
+        if timestamp_utc is not None:
+            if last_timestamp_utc is None or timestamp_utc > last_timestamp_utc:
+                last_timestamp_utc = timestamp_utc
+
+        if event_name == "RecordStatusEvent":
+            status_text = (event.findtext("status") or "").strip().lower()
+            current_ts = timestamp_utc
+            if current_ts is None:
+                current_ts = _safe_int(event.attrib.get("timestamp"))
+            if current_ts is None:
+                continue
+            if status_text == "true":
+                if not recording_active:
+                    recording_active = True
+                    current_record_start = current_ts
+                    if first_recording_start is None:
+                        first_recording_start = current_ts
+            elif status_text == "false":
+                if recording_active and current_record_start is not None:
+                    end_ts = current_ts if current_ts >= current_record_start else current_record_start
+                    recording_segments.append((current_record_start, end_ts))
+                recording_active = False
+                current_record_start = None
             continue
 
         if module == "PARTICIPANT" and event_name == "ParticipantJoinEvent":
@@ -110,16 +215,90 @@ def load_meeting_metadata(meeting_dir: Path) -> tuple[Optional[int], Dict[str, P
                 continue
             name = event.findtext("name") or user_id
             participants[user_id] = Participant(name=name, join_ts=timestamp_utc)
+            continue
+
+        if module == "VOICE" and event_name == "ParticipantTalkingEvent":
+            participant = event.findtext("participant")
+            if not participant:
+                continue
+            talking = (event.findtext("talking") or "").strip().lower() == "true"
+            current_ts = timestamp_utc
+            if current_ts is None:
+                current_ts = _safe_int(event.attrib.get("timestamp"))
+            if current_ts is None:
+                continue
+            if talking:
+                talking_state[participant] = current_ts
+            else:
+                start_ts = talking_state.pop(participant, None)
+                if start_ts is None:
+                    continue
+                if current_ts < start_ts:
+                    current_ts = start_ts
+                talk_windows[participant].append((start_ts, current_ts))
 
     participants_summary = ", ".join(
         f"{user}:{info.join_ts}"
         for user, info in participants.items()
     ) or "<none>"
-    log(
-        f"Parsed metadata for meeting – recording_start={recording_start}, "
-        f"participants={participants_summary}"
+    if recording_active and current_record_start is not None:
+        end_ts = (
+            last_timestamp_utc
+            if last_timestamp_utc is not None and last_timestamp_utc >= current_record_start
+            else current_record_start
+        )
+        recording_segments.append((current_record_start, end_ts))
+
+    # close any dangling talk intervals using the last known timestamp
+    if talking_state:
+        fallback_end = last_timestamp_utc
+        for participant, start_ts in list(talking_state.items()):
+            if start_ts is None:
+                continue
+            end_ts = fallback_end if fallback_end is not None else start_ts
+            if end_ts < start_ts:
+                end_ts = start_ts
+            talk_windows[participant].append((start_ts, end_ts))
+
+    normalised_windows: Dict[str, List[Tuple[int, int]]] = {}
+    for participant, windows in talk_windows.items():
+        cleaned = [
+            (start, end)
+            for start, end in windows
+            if start is not None and end is not None and end >= start
+        ]
+        cleaned.sort(key=lambda pair: pair[0])
+        merged: List[Tuple[int, int]] = []
+        for start, end in cleaned:
+            if not merged:
+                merged.append((start, end))
+                continue
+            last_start, last_end = merged[-1]
+            if start <= last_end:
+                merged[-1] = (last_start, max(last_end, end))
+            else:
+                merged.append((start, end))
+        if merged:
+            normalised_windows[participant] = merged
+
+    talk_summary = ", ".join(
+        f"{user}:{len(windows)}"
+        for user, windows in normalised_windows.items()
+    ) or "<none>"
+    timeline = MeetingTimeline.from_segments(
+        recording_segments,
+        fallback_start=first_recording_start or 0,
     )
-    return recording_start, participants
+    record_summary = ", ".join(
+        f"[{start},{end}]"
+        for start, end in timeline.segments
+    ) or "<none>"
+    log(
+        f"Parsed metadata for meeting – recording_start={first_recording_start}, "
+        f"participants={participants_summary}, talk_windows={talk_summary}, "
+        f"record_segments={record_summary}"
+    )
+    return timeline, participants, normalised_windows
 
 
 def parse_microphone_file(path: Path) -> tuple[Optional[str], Optional[int]]:
@@ -131,17 +310,131 @@ def parse_microphone_file(path: Path) -> tuple[Optional[str], Optional[int]]:
     return user, ts
 
 
-def compute_track_offset(
-    recording_start: Optional[int],
+ALIGN_TOLERANCE_MS = 5000
+
+
+def determine_track_timing(
+    timeline: MeetingTimeline,
     join_ts: Optional[int],
     track_timestamp: Optional[int],
-) -> int:
-    if recording_start is None:
-        return max(join_ts or track_timestamp or 0, 0)
+    talk_windows: List[Tuple[int, int]],
+) -> TrackTiming:
+    windows = list(talk_windows)
+    windows.sort(key=lambda pair: pair[0])
 
-    anchor = join_ts or track_timestamp or recording_start
-    offset = anchor - recording_start
-    return offset if offset >= 0 else 0
+    anchor = track_timestamp
+    if anchor is not None and windows:
+        for start, _ in windows:
+            if start >= anchor - ALIGN_TOLERANCE_MS:
+                if abs(start - anchor) <= ALIGN_TOLERANCE_MS:
+                    anchor = min(start, anchor)
+                break
+
+    if anchor is None:
+        if windows:
+            anchor = windows[0][0]
+        elif join_ts is not None:
+            anchor = join_ts
+        else:
+            anchor = timeline.start_ms
+
+    anchor_int = int(anchor)
+    meeting_offset = timeline.absolute_to_meeting(anchor_int)
+
+    return TrackTiming(
+        anchor_ms=anchor_int,
+        anchor_meeting_ms=int(meeting_offset),
+        talk_windows=windows,
+        timeline=timeline,
+    )
+
+
+def adjust_track_srt(
+    srt_path: Path,
+    timing: TrackTiming,
+) -> None:
+    try:
+        content = srt_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        log(f"SRT not found for alignment: {srt_path}")
+        return
+    except OSError as exc:
+        log(f"Failed to read {srt_path}: {exc}")
+        return
+
+    try:
+        subtitles = list(srt.parse(content))
+    except srt.SRTParseError as exc:
+        log(f"Failed to parse SRT {srt_path}: {exc}")
+        return
+
+    if not subtitles:
+        log(f"No subtitles to align for {srt_path}")
+        return
+
+    adjusted: List[srt.Subtitle] = []
+    tolerance = ALIGN_TOLERANCE_MS
+    anchor = timing.anchor_ms
+    anchor_meeting = timing.anchor_meeting_ms
+    windows = timing.talk_windows
+    timeline = timing.timeline
+
+    for subtitle in subtitles:
+        rel_start_ms = round(subtitle.start.total_seconds() * 1000)
+        rel_end_ms = round(subtitle.end.total_seconds() * 1000)
+
+        abs_start = anchor + rel_start_ms
+        abs_end = anchor + rel_end_ms
+        if abs_end <= abs_start:
+            abs_end = abs_start + 1
+
+        if windows:
+            best_window: Optional[Tuple[int, int]] = None
+            best_overlap = -1
+            for start, end in windows:
+                if end + tolerance < abs_start:
+                    continue
+                if start - tolerance > abs_end:
+                    break
+                overlap = max(0, min(end, abs_end) - max(start, abs_start))
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_window = (start, end)
+            if best_window:
+                window_start, window_end = best_window
+                abs_start = max(abs_start, window_start)
+                abs_end = max(abs_start + 1, min(abs_end, window_end))
+
+        rel_start_delta = max(timeline.absolute_to_meeting(abs_start), 0)
+        rel_end_delta = timeline.absolute_to_meeting(abs_end)
+        if rel_end_delta <= rel_start_delta:
+            rel_end_delta = rel_start_delta + max(1, rel_end_ms - rel_start_ms)
+
+        adjusted.append(
+            srt.Subtitle(
+                index=subtitle.index,
+                start=datetime.timedelta(milliseconds=rel_start_delta),
+                end=datetime.timedelta(milliseconds=rel_end_delta),
+                content=subtitle.content.strip(),
+            )
+        )
+
+    adjusted.sort(key=lambda sub: (sub.start, sub.end))
+    renumbered = [
+        srt.Subtitle(index=i, start=sub.start, end=sub.end, content=sub.content)
+        for i, sub in enumerate(adjusted, start=1)
+    ]
+
+    try:
+        srt_path.write_text(srt.compose(renumbered), encoding="utf-8")
+    except OSError as exc:
+        log(f"Failed to write aligned SRT {srt_path}: {exc}")
+        return
+
+    log(
+        f"Aligned {srt_path.name} to meeting timeline "
+        f"(anchor_abs={anchor}, anchor_meeting={anchor_meeting}, entries={len(renumbered)})"
+    )
 
 
 # ─────────── RabbitMQ connection check ───────────
@@ -208,9 +501,11 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
         log(f"No microphone recordings discovered under {audio_dir}")
         raise RuntimeError("no_audio")
 
-    recording_start, participants = load_meeting_metadata(meeting_dir)
+    timeline, participants, talk_windows = load_meeting_metadata(meeting_dir)
     staging_dir = Path("/app/staging") / meeting_id
     staging_dir.mkdir(parents=True, exist_ok=True)
+    debug_dir = staging_dir / "alignment_debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
 
     from process_audio import process_file
     from merge_transcripts import merge_absolute_srts
@@ -226,16 +521,17 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
         participant = participants.get(user_id)
         speaker_name = participant.name if participant else user_id
         join_ts = participant.join_ts if participant else None
-        offset_ms = compute_track_offset(recording_start, join_ts, track_ts)
+        user_windows = talk_windows.get(user_id, [])
+        timing = determine_track_timing(timeline, join_ts, track_ts, user_windows)
 
         log(
             f"Processing track {mic_path.name}: speaker={speaker_name}, "
-            f"join_ts={join_ts}, track_ts={track_ts}, offset={offset_ms}"
+            f"join_ts={join_ts}, track_ts={track_ts}, offset={timing.anchor_meeting_ms}"
         )
 
         with open("/logs/split.log", "a") as split_log:
             rc = subprocess.run(
-                ["/app/split_audio.sh", str(mic_path), str(offset_ms)],
+                ["/app/split_audio.sh", str(mic_path), str(timing.anchor_meeting_ms)],
                 stdout=split_log,
                 stderr=subprocess.STDOUT,
             ).returncode
@@ -257,7 +553,25 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
         except RuntimeError as exc:
             raise RuntimeError(str(exc))
 
-        per_track_srts.append((str(srt_path), speaker_name))
+        srt_path_obj = Path(srt_path)
+
+        pre_align_copy = debug_dir / f"{srt_path_obj.stem}_before_alignment.srt"
+        try:
+            shutil.copyfile(srt_path_obj, pre_align_copy)
+            log(f"Saved pre-alignment copy {pre_align_copy}")
+        except OSError as exc:
+            log(f"Failed to save pre-alignment SRT for {srt_path_obj.name}: {exc}")
+
+        adjust_track_srt(srt_path_obj, timing)
+
+        post_align_copy = debug_dir / f"{srt_path_obj.stem}_after_alignment.srt"
+        try:
+            shutil.copyfile(srt_path_obj, post_align_copy)
+            log(f"Saved post-alignment copy {post_align_copy}")
+        except OSError as exc:
+            log(f"Failed to save post-alignment SRT for {srt_path_obj.name}: {exc}")
+
+        per_track_srts.append((str(srt_path_obj), speaker_name))
 
     if not per_track_srts:
         raise RuntimeError("no_srt")
