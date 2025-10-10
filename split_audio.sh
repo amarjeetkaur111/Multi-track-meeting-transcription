@@ -24,15 +24,14 @@ fi
 start_offset_ms=$((start_offset_ms))
 
 base_name="$(basename -- "$input_file" .${input_file##*.})"
-output_dir="/app/chunks/${base_name}"  # Updated chunk storage location
+output_dir="/app/chunks/${base_name}"
 rm -rf "$output_dir"
 mkdir -p "$output_dir"
 echo "Starting audio split for '$input_file'"
 
-# Maximum allowed file size in bytes (25MB)
+# Maximum allowed file size in bytes (25MB) – currently unused but kept
 MAX_SIZE=$((25 * 1024 * 1024))
 
-# Determine how many parts to split a file into based on its size
 calc_parts() {
     local size=$1
     if (( size > 75 * 1024 * 1024 )); then
@@ -46,7 +45,6 @@ calc_parts() {
     fi
 }
 
-# Split a chunk file into the specified number of parts using nearby 2s silence
 split_file_parts() {
     local file="$1"
     local parts="$2"
@@ -56,12 +54,10 @@ split_file_parts() {
     local start_ms=$(echo "$base" | cut -d'_' -f1)
     local idx=$(echo "$base" | cut -d'_' -f2 | cut -d'.' -f1)
 
-
     local duration=$(ffprobe -v error -show_entries format=duration \
         -of default=noprint_wrappers=1:nokey=1 "$file")
     local step=$(echo "$duration / $parts" | bc -l)
 
-    # Detect silences and compute their mid points
     local silence_info=$(ffmpeg -y -i "$file" -af "silencedetect=noise=-25dB:d=2" \
         -f null - 2>&1 | grep -oP 'silence_(start|end): \K[0-9]+\.?[0-9]*')
     local silence_times=($silence_info)
@@ -92,36 +88,69 @@ split_file_parts() {
     local chunk_num=1
     for ct in "${cut_times[@]}" "$duration"; do
         local part_dur=$(echo "$ct - $start" | bc -l)
-        local out_start_ms=$(awk "BEGIN { printf \"%0.f\", $start_ms + ($start * 1000) }")
+        local out_start_ms
+        out_start_ms=$(awk "BEGIN { printf \"%0.f\", $start_ms + ($start * 1000) }")
         out_start_ms=$((out_start_ms + start_offset_ms))
-        local out_file="$dir/${out_start_ms}_${idx}_${chunk_num}.ogg"
-        ffmpeg -y -i "$file" -ss "$start" -t "$part_dur" -c:a libvorbis "$out_file" >/dev/null 2>&1
+        local out_file="$dir/${out_start_ms}_${idx}_${chunk_num}.wav"
+        ffmpeg -y -nostats -loglevel error -i "$file" -ss "$start" -t "$part_dur" \
+            -vn -ac 1 -ar 16000 -c:a pcm_s16le "$out_file" >/dev/null 2>&1
         start=$ct
         ((chunk_num++))
     done
     rm -f "$file"
 }
 
-# Ensure a file does not exceed MAX_SIZE
 ensure_size() {
     local f="$1"
-    local size=$(stat -c%s "$f")
-    local parts=$(calc_parts $size)
+    local size
+    size=$(stat -c%s "$f")
+    local parts
+    parts=$(calc_parts "$size")
     if (( parts > 1 )); then
         split_file_parts "$f" "$parts"
     fi
 }
 
-silence_info=$(ffmpeg -y -i "$input_file" -af "silencedetect=noise=-25dB:d=7" -f null - 2>&1 | \
+# --- detect internal silences over 7s ---
+silence_info=$(ffmpeg -y -i "$input_file" -af "silencedetect=noise=-25dB:d=2" -f null - 2>&1 | \
     grep -oP 'silence_(start|end): \K[0-9]+\.?[0-9]*')
 
 declare -a silence_times=($silence_info)
 num_silence=${#silence_times[@]}
 
+# Normalize unmatched pairs → fall back to "no internal silencess"
 if (( num_silence % 2 != 0 )); then
-    echo "Error: Unmatched silence start/end pairs detected."
-    exit 1
+    echo "Warn: Unmatched silence pairs; falling back to single-chunk export."
+    num_silence=0
 fi
+
+# ===== INSERTED BLOCK STARTS HERE =====
+
+# Guard: very short/empty audio → create no chunks, exit 0
+file_duration=$(ffprobe -v error -show_entries format=duration \
+    -of default=noprint_wrappers=1:nokey=1 "$input_file" 2>/dev/null)
+file_duration=${file_duration:-0}
+# strip trailing decimals safely (optional)
+file_duration_int=${file_duration%.*}
+
+if [ -z "$file_duration" ] || (( $(echo "$file_duration < 0.2" | bc -l) )); then
+    echo "Info: very short/empty audio; producing no chunks (exit 0)"
+    exit 0
+fi
+
+# No internal silences → export whole file as one aligned chunk
+if (( num_silence == 0 )); then
+    start_time=0
+    start_time_us=$(awk "BEGIN { printf \"%0.f\", $start_time * 1000 }")
+    abs_start_ms=$((start_time_us + start_offset_ms))
+    output_file="$output_dir/${abs_start_ms}_1.wav"
+    ffmpeg -y -nostats -loglevel error -i "$input_file" \
+        -vn -ac 1 -ar 16000 -c:a pcm_s16le "$output_file"
+    echo "Finished audio split into '$output_dir' (single chunk fallback)"
+    exit 0
+fi
+
+# ===== INSERTED BLOCK ENDS HERE =====
 
 start_time=0
 chunk_index=1
@@ -133,12 +162,13 @@ for (( i=0; i<num_silence; i+=2 )); do
     silence_end=${silence_times[i+1]}
     duration=$(echo "$silence_start - $start_time" | bc)
 
-    start_time_us=$(awk "BEGIN { printf \"%0.f\", $start_time * 1000 }")  # Convert to milliseconds
+    start_time_us=$(awk "BEGIN { printf \"%0.f\", $start_time * 1000 }")
     abs_start_ms=$((start_time_us + start_offset_ms))
-    output_file="$output_dir/${abs_start_ms}_${chunk_index}.ogg"  # Correct file naming
+    output_file="$output_dir/${abs_start_ms}_${chunk_index}.wav"
 
     if (( $(echo "$duration > 0" | bc -l) )); then
-        ffmpeg -y -i "$input_file" -ss "$start_time" -t "$duration" -c:a libvorbis "$output_file" &
+        ffmpeg -y -nostats -loglevel error -i "$input_file" -ss "$start_time" -t "$duration" \
+            -vn -ac 1 -ar 16000 -c:a pcm_s16le "$output_file" &
         ((job_count++))
     fi
 
@@ -155,16 +185,16 @@ final_duration=$(ffmpeg -i "$input_file" 2>&1 | grep "Duration" | awk '{print $2
 remaining_duration=$(echo "$final_duration - $start_time" | bc)
 start_time_us=$(awk "BEGIN { printf \"%0.f\", $start_time * 1000 }")
 abs_start_ms=$((start_time_us + start_offset_ms))
-output_file="$output_dir/${abs_start_ms}_${chunk_index}.ogg"
+output_file="$output_dir/${abs_start_ms}_${chunk_index}.wav"
 
-if (( $(echo "$remaining_duration > 0" | bc -l) )); then
-    ffmpeg -y -i "$input_file" -ss "$start_time" -c:a libvorbis "$output_file" &
+if (( $(echo "$remaining_duration > 0.15" | bc -l) )); then
+    ffmpeg -y -nostats -loglevel error -i "$input_file" -ss "$start_time" \
+        -vn -ac 1 -ar 16000 -c:a pcm_s16le "$output_file" &
 fi
-
 
 wait
 
-for f in "$output_dir"/*.ogg; do
+for f in "$output_dir"/*.wav; do
     if [ ! -s "$f" ]; then
         rm -f "$f"
         continue

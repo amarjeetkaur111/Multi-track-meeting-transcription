@@ -503,6 +503,8 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
     timeline, participants, talk_windows = load_meeting_metadata(meeting_dir)
     meeting_scripts_dir = Path("/app/scripts") / meeting_id
     meeting_scripts_dir.mkdir(parents=True, exist_ok=True)
+    meeting_scripts_dir = Path("/app/scripts") / meeting_id
+    meeting_scripts_dir.mkdir(parents=True, exist_ok=True)
 
     from process_audio import process_file
     from merge_transcripts import merge_absolute_srts
@@ -526,38 +528,54 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
             f"join_ts={join_ts}, track_ts={track_ts}, offset={timing.anchor_meeting_ms}"
         )
 
+        # Split audio with per-track offset; if split fails, skip this track
         with open("/logs/split.log", "a") as split_log:
             rc = subprocess.run(
                 ["/app/split_audio.sh", str(mic_path), str(timing.anchor_meeting_ms)],
                 stdout=split_log,
                 stderr=subprocess.STDOUT,
             ).returncode
-        if rc != 0:
-            raise RuntimeError(f"split_failed:{mic_path.name}")
 
+        if rc != 0:
+            log(f"[split] skipping track (rc={rc}): {mic_path.name}")
+            continue  # do NOT abort the whole meeting
+
+        # Transcribe this track; if it yields no SRT, skip
         try:
             srt_path = process_file(
                 str(mic_path),
                 MODEL,
                 destination_dir=meeting_scripts_dir,
+                destination_dir=meeting_scripts_dir,
                 final_basename=mic_path.stem,
                 finalize=False,
                 generate_txt=False,
                 intermediate_dir=meeting_scripts_dir,
+                intermediate_dir=meeting_scripts_dir,
             )
-        except (torch.cuda.CudaError, torch.cuda.OutOfMemoryError) as fatal:
-            log(f"Fatal CUDA error: {fatal}; exiting so the container restarts")
-            os._exit(1)
+        except (torch.cuda.CudaError, torch.cuda.OutOfMemoryError):
+            # GPU fatal: bail and let container restart
+            raise
         except RuntimeError as exc:
-            raise RuntimeError(str(exc))
+            # Expected per-track “no audio / no srt / corrupt” → skip
+            if str(exc) in {"no_audio", "no_srt", "merge_transcripts_failed"}:
+                log(f"[transcribe] skipping track ({exc}): {mic_path.name}")
+                continue
+            # Unexpected → re-raise
+            raise
 
-        srt_path_obj = Path(srt_path)
+        srt_path_obj = Path(srt_path) if srt_path else None
+        if not srt_path_obj or not srt_path_obj.exists() or srt_path_obj.stat().st_size == 0:
+            log(f"[transcribe] empty SRT; skipping: {mic_path.name}")
+            continue
 
         per_track_srts.append((str(srt_path_obj), speaker_name))
+
 
     if not per_track_srts:
         raise RuntimeError("no_srt")
 
+    final_srt_path = meeting_scripts_dir / f"{meeting_id}.srt"
     final_srt_path = meeting_scripts_dir / f"{meeting_id}.srt"
 
     try:
