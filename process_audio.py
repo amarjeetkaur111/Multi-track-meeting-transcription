@@ -98,6 +98,25 @@ def ensure_wav(path: str) -> str:
     except Exception:
         return path  # fall back; caller will handle failure
 
+def shift_srt_inplace(path: Path, shift_ms: int) -> None:
+    """Shift every cue by +shift_ms (can be negative)."""
+    if not shift_ms:
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        subs = list(srt.parse(f.read()))
+    delta = datetime.timedelta(milliseconds=int(shift_ms))
+    fixed = []
+    for sub in subs:
+        start = sub.start + delta
+        end   = sub.end   + delta
+        # clamp to 0
+        if start.total_seconds() < 0:
+            start = datetime.timedelta(0)
+            if end <= start:
+                end = start + datetime.timedelta(milliseconds=MIN_CAPTION_MS)
+        fixed.append(srt.Subtitle(index=sub.index, start=start, end=end, content=sub.content))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(srt.compose(list(srt.sort_and_reindex(fixed))))
 
 def _segmentize_with_words(segments):
     subs, idx = [], 1
@@ -369,6 +388,11 @@ def process_file(
         log(f"merge_transcripts.py failed with code {rc}")
         raise RuntimeError("merge_transcripts_failed")
     log("Merged transcripts")
+    
+    shift_val = int(os.getenv("SRT_SHIFT_MS", "0"))
+    if shift_val:
+        log(f"Applying global SRT shift of {shift_val} ms")
+        shift_srt_inplace(output_srt, shift_val)
 
     # Post-merge tidy
     def tidy_srt_inplace(path: Path, min_dur_ms: int = MIN_CAPTION_MS, pad_gap_ms: int = PAD_GAP_MS):
