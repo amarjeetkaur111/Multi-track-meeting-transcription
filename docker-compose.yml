@@ -25,7 +25,7 @@ services:
               capabilities: [ gpu ]
     volumes:
       - ./models:/root/.cache/whisper
-      - /transcripts:/transcripts
+      - /transcripts_speaker_wise:/transcripts_speaker_wise
       - /recordings_server/bigbluebutton/recording/raw:/recordings_server/bigbluebutton/recording/raw
       - .:/app
       - /var/run/docker.sock:/var/run/docker.sock # Mount Docker socket
