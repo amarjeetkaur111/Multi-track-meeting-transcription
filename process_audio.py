@@ -194,7 +194,6 @@ def process_file(
     finalize: bool = True,
     generate_txt: bool = True,
     intermediate_dir: Optional[Path] = None,
-    intermediate_dir: Optional[Path] = None,
 ) -> Path:
     if model is None:
         model = get_model()
@@ -204,7 +203,6 @@ def process_file(
     log(f"Starting processing for {base_name}")
 
     chunk_dir = f"/app/chunks/{base_name}"
-    scripts_dir = Path(intermediate_dir) if intermediate_dir else Path("/app/scripts")
     scripts_dir = Path(intermediate_dir) if intermediate_dir else Path("/app/scripts")
     scripts_dir.mkdir(parents=True, exist_ok=True)
     output_srt = scripts_dir / f"{base_name}.srt"
@@ -446,18 +444,8 @@ def process_file(
         log(f"Copied SRT to {final_srt_transcripts}")
     else:
         log(f"SRT already located at {final_srt_transcripts}; skipping copy")
-    if output_srt.resolve() != final_srt_transcripts.resolve():
-        shutil.copy(output_srt, final_srt_transcripts)
-        log(f"Copied SRT to {final_srt_transcripts}")
-    else:
-        log(f"SRT already located at {final_srt_transcripts}; skipping copy")
 
     if generate_txt:
-        if output_txt.resolve() != final_txt_transcripts.resolve():
-            shutil.copy(output_txt, final_txt_transcripts)
-            log(f"Copied TXT to {final_txt_transcripts}")
-        else:
-            log(f"TXT already located at {final_txt_transcripts}; skipping copy")
         if output_txt.resolve() != final_txt_transcripts.resolve():
             shutil.copy(output_txt, final_txt_transcripts)
             log(f"Copied TXT to {final_txt_transcripts}")

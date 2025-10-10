@@ -503,8 +503,6 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
     timeline, participants, talk_windows = load_meeting_metadata(meeting_dir)
     meeting_scripts_dir = Path("/app/scripts") / meeting_id
     meeting_scripts_dir.mkdir(parents=True, exist_ok=True)
-    meeting_scripts_dir = Path("/app/scripts") / meeting_id
-    meeting_scripts_dir.mkdir(parents=True, exist_ok=True)
 
     from process_audio import process_file
     from merge_transcripts import merge_absolute_srts
@@ -546,11 +544,9 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
                 str(mic_path),
                 MODEL,
                 destination_dir=meeting_scripts_dir,
-                destination_dir=meeting_scripts_dir,
                 final_basename=mic_path.stem,
                 finalize=False,
                 generate_txt=False,
-                intermediate_dir=meeting_scripts_dir,
                 intermediate_dir=meeting_scripts_dir,
             )
         except (torch.cuda.CudaError, torch.cuda.OutOfMemoryError):
@@ -575,7 +571,6 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
     if not per_track_srts:
         raise RuntimeError("no_srt")
 
-    final_srt_path = meeting_scripts_dir / f"{meeting_id}.srt"
     final_srt_path = meeting_scripts_dir / f"{meeting_id}.srt"
 
     try:
