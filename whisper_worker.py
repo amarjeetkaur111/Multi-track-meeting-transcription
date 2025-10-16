@@ -12,6 +12,7 @@ import threading
 import subprocess
 import sys
 import re
+import shutil
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass
@@ -457,14 +458,14 @@ def schedule_hb_log(conn, chan):
 # ─────────── RESULT_QUEUE notifier ───────────
 def notify_file(channel, file_id, ftype, status, error=None):
     suffix_map = {
-        "srt": f"{file_id}.srt",
+        "srt": f"{file_id}.txt",
     }
     suffix = suffix_map.get(ftype)
 
     content = None
     if status == "done" and suffix:
         try:
-            script_path = Path(f"/transcripts/scripts/{suffix}")
+            script_path = Path(f"/transcripts_speaker_wise/{file_id}/{suffix}")
             content = script_path.read_text(encoding="utf-8")
             # log(f"Script {ftype} for {file_id}: {content}")
         except Exception as exc:
@@ -503,6 +504,8 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
     timeline, participants, talk_windows = load_meeting_metadata(meeting_dir)
     meeting_scripts_dir = Path("/app/scripts") / meeting_id
     meeting_scripts_dir.mkdir(parents=True, exist_ok=True)
+    transcripts_output_dir = Path("/transcripts_speaker_wise") / meeting_id
+    transcripts_output_dir.mkdir(parents=True, exist_ok=True)
 
     from process_audio import process_file
     from merge_transcripts import merge_absolute_srts
@@ -565,13 +568,26 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
             log(f"[transcribe] empty SRT; skipping: {mic_path.name}")
             continue
 
+        target_srt_path = transcripts_output_dir / srt_path_obj.name
+        try:
+            if target_srt_path.exists():
+                target_srt_path.unlink()
+            shutil.move(str(srt_path_obj), target_srt_path)
+            log(f"Moved {srt_path_obj} to {target_srt_path}")
+            srt_path_obj = target_srt_path
+        except Exception as exc:
+            log(f"Failed to move SRT {srt_path_obj} to {target_srt_path}: {exc}")
+            continue
+
         per_track_srts.append((str(srt_path_obj), speaker_name))
 
 
     if not per_track_srts:
         raise RuntimeError("no_srt")
 
-    final_srt_path = meeting_scripts_dir / f"{meeting_id}.srt"
+    final_srt_path = transcripts_output_dir / f"{meeting_id}.srt"
+    if final_srt_path.exists():
+        final_srt_path.unlink()
 
     try:
         merge_absolute_srts(per_track_srts, str(final_srt_path))
@@ -579,6 +595,48 @@ def run_pipeline(meeting_dir: Path, meeting_id: str) -> Path:
         raise RuntimeError(str(exc))
 
     log(f"Merged {len(per_track_srts)} track transcripts into {final_srt_path}")
+
+    final_txt_path = transcripts_output_dir / f"{meeting_id}.txt"
+
+    def write_txt_transcript(source: Path, target: Path) -> None:
+        pattern = re.compile(
+            r"(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.+?)(?=\n\n|\Z)",
+            re.DOTALL,
+        )
+        try:
+            content = source.read_text(encoding="utf-8")
+            formatted = []
+            for match in pattern.finditer(content):
+                start_time = match.group(2).replace(",", ".")
+                end_time = match.group(3).replace(",", ".")
+                text = " ".join(match.group(4).splitlines())
+                formatted.append(f"[{start_time} {end_time}] {text}")
+            target.write_text("\n".join(formatted), encoding="utf-8")
+            log(f"Wrote TXT transcript to {target}")
+        except Exception as exc:
+            log(f"Failed to create TXT transcript {target}: {exc}")
+
+    if final_srt_path.exists():
+        write_txt_transcript(final_srt_path, final_txt_path)
+    else:
+        log(f"Final SRT {final_srt_path} missing; skipping TXT export")
+
+    # Comment out the following block to retain per-track SRT files once the final transcript is ready.
+    for track_path_str, _speaker in per_track_srts:
+        track_path = Path(track_path_str)
+        if track_path != final_srt_path and track_path.exists():
+            try:
+                track_path.unlink()
+                log(f"Removed per-track SRT {track_path}")
+            except Exception as exc:
+                log(f"Failed to remove per-track SRT {track_path}: {exc}")
+
+    try:
+        shutil.rmtree(meeting_scripts_dir)
+        log(f"Removed intermediate directory {meeting_scripts_dir}")
+    except FileNotFoundError:
+        pass
+
 
     return final_srt_path
 
