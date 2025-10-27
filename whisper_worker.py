@@ -59,8 +59,8 @@ PARAMS = pika.ConnectionParameters(
     blocked_connection_timeout = HEARTBEAT * 2,
 )
 
-FILE_TYPES = ["srt"]
-RECORDINGS_ROOT = Path(os.getenv("RECORDINGS_ROOT", "/recordings"))
+FILE_TYPES = ["txt"]
+RECORDINGS_ROOT = Path(os.getenv("RECORDINGS_ROOT", "/recordings_server/bigbluebutton/recording/raw"))
 
 # ─────────── Metadata helpers ───────────
 
@@ -458,7 +458,7 @@ def schedule_hb_log(conn, chan):
 # ─────────── RESULT_QUEUE notifier ───────────
 def notify_file(channel, file_id, ftype, status, error=None):
     suffix_map = {
-        "srt": f"{file_id}.txt",
+        "txt": f"{file_id}.txt",
     }
     suffix = suffix_map.get(ftype)
 
@@ -677,7 +677,7 @@ def spawn_worker(connection, channel, method, body: bytes):
     meeting_dir = RECORDINGS_ROOT / file_id
     if not meeting_dir.exists() or not meeting_dir.is_dir():
         log(f"Meeting directory not found: {meeting_dir}")
-        enqueue(notify_op(channel, file_id, "srt", "error", "meeting_not_found"))
+        enqueue(notify_op(channel, file_id, "txt", "error", "meeting_not_found"))
         ack()
         return
 
@@ -696,11 +696,11 @@ def spawn_worker(connection, channel, method, body: bytes):
         final_srt_path = run_pipeline(meeting_dir, file_id)
 
         if not final_srt_path.exists():
-            enqueue(notify_op(channel, file_id, "srt", "error", "srt_failed"))
+            enqueue(notify_op(channel, file_id, "txt", "error", "srt_failed"))
             ack()
             return
-        enqueue(notify_op(channel, file_id, "srt", "done"))
-        processed.add("srt")
+        enqueue(notify_op(channel, file_id, "txt", "done"))
+        processed.add("txt")
 
         ack()
 
