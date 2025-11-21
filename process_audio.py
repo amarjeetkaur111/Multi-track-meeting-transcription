@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from logger import log
 from whisper_model import get_model
+from audio_pre import preprocess_chunk
 
 load_dotenv()
 
@@ -283,14 +284,26 @@ def process_file(
             log(f"Skipping zero-byte chunk {chunk_name}")
             return None
 
+        # ---- NEW: call RNNoise + Silero VAD here ----
+        try:
+            keep = preprocess_chunk(chunk_path)
+        except Exception as e:
+            log(f"Preprocess (RNNoise+VAD) failed on {chunk_name}: {e}")
+            keep = True  # fail-open
+
+        if not keep:
+            log(f"VAD: Dropping non-speech chunk {chunk_name}")
+            return None
+
+        # ---- END NEW BLOCK ----
         # Build kwargs guardedly; some builds choke on these keys
         kwargs = {}
         if USE_WORD_TIMESTAMPS:
             kwargs.update(dict(
                 word_timestamps=True,
                 condition_on_previous_text=False,   # keep False here; we split by words anyway
-                no_speech_threshold=0.2,
-                logprob_threshold=-1.0,
+                no_speech_threshold=0.6,
+                logprob_threshold=-0.8,
                 compression_ratio_threshold=2.4,
             ))
         else:
@@ -298,8 +311,8 @@ def process_file(
             kwargs.update(dict(
                 word_timestamps=False,
                 condition_on_previous_text=False,
-                no_speech_threshold=0.2,
-                logprob_threshold=-1.0,
+                no_speech_threshold=0.6,
+                logprob_threshold=-0.8,
                 compression_ratio_threshold=2.4,
             ))
         # quick sanity checks
@@ -343,6 +356,33 @@ def process_file(
             log(f"No segments for {chunk_name}: {exc}\n{traceback.format_exc()}")
             return None
 
+        # ---- NEW: drop very low-confidence / noise-like segments ----
+        NS_MAX = float(os.getenv("SEG_NO_SPEECH_MAX", "0.6"))   # if higher, probably noise
+        LP_MIN = float(os.getenv("SEG_LOGPROB_MIN", "-0.9"))    # if lower, very uncertain
+
+        filtered = []
+        for seg in segments:
+            ns = float(seg.get("no_speech_prob", 0.0))
+            lp = float(seg.get("avg_logprob", 0.0))
+            text = (seg.get("text") or "").strip()
+
+            # Highly probable "no speech" or very low confidence → drop
+            if ns > NS_MAX or lp < LP_MIN:
+                log(
+                    f"Dropping low-confidence seg in {chunk_name}: "
+                    f"no_speech_prob={ns:.2f}, avg_logprob={lp:.2f}, text={text!r}"
+                )
+                continue
+
+            filtered.append(seg)
+
+        if not filtered:
+            log(f"All segments filtered out as low-confidence / noise for {chunk_name}")
+            return None
+
+        segments = filtered
+        # ---- END NEW BLOCK ----
+        
         # Build subtitles
         try:
             if USE_WORD_TIMESTAMPS and any(_field(seg, "words", None) for seg in segments):
