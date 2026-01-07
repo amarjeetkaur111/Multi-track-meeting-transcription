@@ -4,7 +4,7 @@ An internal service that takes separate mic recordings (`webm` per microphone) a
 
 **Role:** Tech lead 
 **Stack:** Python, Whisper (open-source turbo), RabbitMQ, Docker, ffmpeg, [storage], [logging/metrics]
-
+**Infra:** 64-core CPU + 2×32GB GPUs + 6container for continous transcription of live meetings (GPU-first inference, CPU for decode + orchestration)
 ---
 
 ## Why
