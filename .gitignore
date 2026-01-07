@@ -19,3 +19,4 @@ node_modules/
 __pycache__/
 .env
 .gitignore
+.env
