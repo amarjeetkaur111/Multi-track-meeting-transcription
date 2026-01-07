@@ -21,7 +21,8 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              # count: all
+              device_ids: ["${GPU_ID}"]
               capabilities: [ gpu ]
     volumes:
       - ./models:/root/.cache/whisper
@@ -38,5 +39,5 @@ services:
     tty: true
     restart: always
     # command: sh -c "rm -rf /logs/*.log && python3 /app/whisper_worker.py > /logs/whisper.log 2>&1"
-    command: sh -c "python3 /app/whisper_worker.py >> /logs/whisper.log 2>&1"
+    command: python3 /app/whisper_worker.py
 

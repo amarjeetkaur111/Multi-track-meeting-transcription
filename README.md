@@ -28,7 +28,7 @@ This repository provides Docker configuration and scripts for running a Whisper 
 
 ## Logs
 - Application logs are written to `./logs`.
-- `whisper.log` – worker output
-- `split.log` – audio splitting details
+- `whisper.log` – worker output (rotated at 10MB, up to 10 files)
+- `split.log` – audio splitting details (rotated at 10MB, up to 10 files)
 
 

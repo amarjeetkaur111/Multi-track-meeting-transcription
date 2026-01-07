@@ -1,5 +1,34 @@
 #!/bin/bash
 
+rotate_logs() {
+    local file="$1"
+    local max_bytes="$2"
+    local backups="$3"
+
+    mkdir -p "$(dirname "$file")"
+
+    if [ -f "$file" ]; then
+        local size
+        size=$(stat -c%s "$file")
+        if [ "$size" -ge "$max_bytes" ]; then
+            for ((i=backups; i>=1; i--)); do
+                local src="$file.$((i-1))"
+                local dst="$file.$i"
+                if [ $i -eq 1 ]; then
+                    src="$file"
+                fi
+                if [ -f "$src" ]; then
+                    mv "$src" "$dst"
+                fi
+            done
+        fi
+    fi
+}
+
+ROTATE_MAX_BYTES=$((10 * 1024 * 1024))
+ROTATE_BACKUPS=9
+rotate_logs "/logs/split.log" "$ROTATE_MAX_BYTES" "$ROTATE_BACKUPS"
+
 exec >> /logs/split.log 2>&1
 
 if ! command -v ffmpeg &> /dev/null

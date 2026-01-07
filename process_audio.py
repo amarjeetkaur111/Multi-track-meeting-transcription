@@ -28,6 +28,7 @@ MAX_SEG_LEN = float(os.getenv("SEG_MAX_S", "2.0"))              # hard cap for a
 MIN_CAPTION_MS = int(os.getenv("SEG_MIN_MS", "800"))
 PAD_GAP_MS = int(os.getenv("SEG_PAD_MS", "50"))
 MAX_CHARS = int(os.getenv("SEG_MAX_CHARS", "84"))               # ~2 lines
+WHISPER_INITIAL_PROMPT = os.getenv("WHISPER_INITIAL_PROMPT", "").strip()
 
 def _field(x, name, default=None):
     if isinstance(x, dict):
@@ -298,6 +299,9 @@ def process_file(
         # ---- END NEW BLOCK ----
         # Build kwargs guardedly; some builds choke on these keys
         kwargs = {}
+        if WHISPER_INITIAL_PROMPT:
+            kwargs["initial_prompt"] = WHISPER_INITIAL_PROMPT
+            
         if USE_WORD_TIMESTAMPS:
             kwargs.update(dict(
                 word_timestamps=True,
@@ -338,12 +342,12 @@ def process_file(
                         return None
                 else:
                     return None 
-            except TypeError:
-                # model doesn’t accept one or more kwargs
-                if "word_timestamps" in kwargs:
-                    # strip it and retry
-                    kwargs.pop("word_timestamps", None)
+            except TypeError as te:
+                # model doesn’t accept one or more kwargs -> strip optional keys and retry
+                for k in ("word_timestamps", "initial_prompt"):
+                    kwargs.pop(k, None)
                 result = model.transcribe(chunk_path, **kwargs)
+                
         except (torch.cuda.CudaError, torch.cuda.OutOfMemoryError):
             raise
         except Exception as exc:
