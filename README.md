@@ -34,4 +34,4 @@ We needed a pipeline that could process tracks in parallel **and** reliably merg
 
 - Built an internal **async transcription pipeline** (Python + Whisper + RabbitMQ) to convert per-mic `webm` recordings into merged, time-aligned **SRT/TXT**.
 - Implemented **sync + merge** logic for multi-track audio, keeping speaker ordering correct during overlaps and interruptions.
-- Scaled processing to 100+ hours of audio/day by tuning consumer concurrency/prefetch and Dockerized deployments.
+- Scaled processing to 100+ hours of audio/day by tuning consumer concurrency/prefetch and Dockerized deployments. switch to transcription speaker branch for code
