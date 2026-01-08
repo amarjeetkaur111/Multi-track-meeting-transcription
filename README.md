@@ -1,4 +1,4 @@
-# BiggerBlueButton Whisper
+# Whisper
 
 This repository provides Docker configuration and scripts for running a Whisper transcription service with optional GPU acceleration. The worker transcribes audio locally using the open source **Whisper** model from OpenAI.
 
